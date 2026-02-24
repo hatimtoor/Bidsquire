@@ -103,6 +103,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // We pass the URL back so the frontend can redirect the user to the dashboard with the URL pre-filled.
      let hibidUrl = payload.hibid_url;
 
+    // Send welcome email now that user has activated their account
+    try {
+      const mainAppUrl = process.env.MAIN_APP_URL || 'http://localhost:3001';
+      // Call the Onboarding app's email service to send welcome email
+      const welcomeRes = await fetch(`${process.env.ONBOARDING_APP_URL || 'http://localhost:3002'}/api/email/welcome`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret: process.env.CROSS_APP_SECRET || 'temporary-dev-secret-change-me',
+          email: email,
+          name: name || 'User',
+        }),
+      });
+      if (welcomeRes.ok) {
+        console.log(`[Activate] Welcome email sent to ${email}`);
+      } else {
+        console.error(`[Activate] Failed to send welcome email:`, await welcomeRes.text());
+      }
+    } catch (emailError) {
+      console.error('[Activate] Error sending welcome email:', emailError);
+      // Don't fail activation if email fails
+    }
+
     return res.status(200).json({
         user: { email: user.email, role: user.role },
         success: true,
