@@ -12,9 +12,9 @@ export const metadata: Metadata = {
   description: 'Streamline your auction workflow from research to final listing with Bidsquire\'s comprehensive management platform.',
   viewport: 'width=device-width, initial-scale=1',
   icons: {
-    icon: '/images/bidsquire-logo.png',
-    shortcut: '/images/bidsquire-logo.png',
-    apple: '/images/bidsquire-logo.png',
+    icon: '/images/favicon.png',
+    shortcut: '/images/favicon.png',
+    apple: '/images/favicon.png',
   },
 }
 
