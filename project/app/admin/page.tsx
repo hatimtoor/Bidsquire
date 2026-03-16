@@ -545,7 +545,9 @@ export default function AdminPage() {
       }
 
       if (successCount > 0) {
-        toast.success(`${successCount} URL(s) submitted for processing. Items will appear shortly.`);
+        toast.success(`${successCount} URL(s) submitted! Your items are being fetched and will appear in the Item Pipeline once ready.`, {
+          duration: 6000,
+        });
         setUrls(['']); // Reset to single empty input
 
         // Refresh credits immediately, items after a delay (n8n takes time)
@@ -1058,17 +1060,17 @@ export default function AdminPage() {
         {/* Dashboard Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="workflow">Auction Workflow</TabsTrigger>
+            <TabsTrigger value="workflow">Item Pipeline</TabsTrigger>
             <TabsTrigger value="finalized">Finalized Items</TabsTrigger>
             <TabsTrigger value="overview">Overview</TabsTrigger>
           </TabsList>
 
 
-          {/* Auction Workflow Tab */}
+          {/* Item Pipeline Tab */}
           <TabsContent value="workflow" className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-semibold text-gray-900">Auction Workflow</h2>
+                <h2 className="text-2xl font-semibold text-gray-900">Item Pipeline</h2>
                 <p className="text-sm text-gray-600 mt-1">Click on any item to view all images</p>
               </div>
               <div className="flex items-center gap-2">
@@ -1089,7 +1091,7 @@ export default function AdminPage() {
                   <FileText className="mx-auto h-12 w-12 text-gray-400 mb-4" />
                   <h3 className="text-lg font-medium text-gray-900 mb-2">No auction items yet</h3>
                   <p className="text-gray-600">
-                    Import webhook data or create items manually to see them here.
+                    Submit a URL above or add items manually to get started.
                   </p>
                 </CardContent>
               </Card>
@@ -2026,7 +2028,7 @@ export default function AdminPage() {
                   <div className="space-y-3">
                     <Button className="w-full" onClick={() => setActiveTab('workflow')}>
                       <FileText className="mr-2 h-4 w-4" />
-                      View Auction Workflow
+                      View Item Pipeline
                     </Button>
                     <Button variant="outline" className="w-full" onClick={() => setActiveTab('finalized')}>
                       <CheckCircle className="mr-2 h-4 w-4" />

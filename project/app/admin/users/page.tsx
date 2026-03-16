@@ -341,7 +341,10 @@ export default function UsersPage() {
                         {users.length === 0 && !isLoadingData && (
                             <div className="text-center py-12 text-gray-500 border-2 border-dashed rounded-lg">
                                 <Users className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-                                <p>No users found</p>
+                                <p className="font-medium text-gray-700 mb-2">No team members yet</p>
+                                <p className="text-sm text-gray-500 mb-4 max-w-md mx-auto">
+                                    Photographers can help you capture and upload product images. Add team members to delegate photography tasks and speed up your workflow.
+                                </p>
                                 <Button variant="link" onClick={() => setIsAddUserModalOpen(true)}>
                                     Add your first photographer
                                 </Button>
