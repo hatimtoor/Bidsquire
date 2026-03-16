@@ -3,13 +3,14 @@
 import { useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Loader2, CheckCircle, AlertCircle, Eye, EyeOff } from 'lucide-react';
-
-// Using inline styles/components to ensure it works without complex imports,
-// creating a premium feel with Tailwind.
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 export default function ActivatePage() {
     return (
-        <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-950 text-white">Loading...</div>}>
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>}>
             <ActivateForm />
         </Suspense>
     );
@@ -83,11 +84,24 @@ function ActivateForm() {
 
     if (!token) {
         return (
-            <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
-                <div className="max-w-md w-full bg-slate-900/50 backdrop-blur-xl border border-slate-700 p-8 rounded-2xl shadow-2xl text-center">
-                    <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-                    <h1 className="text-2xl font-bold mb-2">Invalid Link</h1>
-                    <p className="text-slate-400">This activation link appears to be missing required information.</p>
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+                <div className="max-w-md w-full space-y-8">
+                    <div className="text-center">
+                        <div className="mx-auto flex justify-center">
+                            <img
+                                src="/images/bidsquire-logo.png"
+                                alt="Bidsquire"
+                                className="h-16 w-auto"
+                            />
+                        </div>
+                    </div>
+                    <Card>
+                        <CardContent className="pt-6 text-center">
+                            <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                            <h1 className="text-xl font-bold text-gray-900 mb-2">Invalid Link</h1>
+                            <p className="text-gray-600">This activation link appears to be missing required information.</p>
+                        </CardContent>
+                    </Card>
                 </div>
             </div>
         )
@@ -95,88 +109,122 @@ function ActivateForm() {
 
     if (success) {
         return (
-            <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
-                <div className="max-w-md w-full bg-slate-900/50 backdrop-blur-xl border border-green-500/30 p-8 rounded-2xl shadow-2xl text-center">
-                    <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                        <CheckCircle className="w-8 h-8 text-green-500" />
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+                <div className="max-w-md w-full space-y-8">
+                    <div className="text-center">
+                        <div className="mx-auto flex justify-center">
+                            <img
+                                src="/images/bidsquire-logo.png"
+                                alt="Bidsquire"
+                                className="h-16 w-auto"
+                            />
+                        </div>
+                        <h2 className="mt-6 text-3xl font-extrabold text-gray-900">
+                            Account Activated!
+                        </h2>
+                        <p className="mt-2 text-sm text-gray-600">
+                            Your password has been set successfully
+                        </p>
                     </div>
-                    <h1 className="text-3xl font-bold mb-2">Account Activated!</h1>
-                    <p className="text-slate-400 mb-6">Your password has been set successfully. You can now access your dashboard.</p>
-                    <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
-                        <Loader2 className="w-4 h-4 animate-spin" /> Redirecting to login...
-                    </div>
+                    <Card>
+                        <CardContent className="pt-6 text-center">
+                            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <CheckCircle className="w-6 h-6 text-green-600" />
+                            </div>
+                            <p className="text-gray-600 mb-4">You can now access your dashboard.</p>
+                            <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
+                                <Loader2 className="w-4 h-4 animate-spin" /> Redirecting to login...
+                            </div>
+                        </CardContent>
+                    </Card>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
-            <div className="max-w-md w-full bg-slate-900/50 backdrop-blur-xl border border-slate-700 p-8 rounded-2xl shadow-2xl">
-                <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-cyan-400 mb-2">
-                        Activate Account
-                    </h1>
-                    <p className="text-slate-400">
-                        Set a secure password to access your Admin Dashboard.
-                    </p>
-                </div>
-
-                {error && (
-                    <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-3">
-                        <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-                        <p className="text-sm text-red-200">{error}</p>
-                    </div>
-                )}
-
-                <form onSubmit={handleSubmit} className="space-y-6">
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-300 ml-1">New Password</label>
-                        <div className="relative">
-                            <input
-                                type={showPassword ? "text" : "password"}
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className="w-full bg-slate-950/50 border border-slate-700 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all text-white placeholder-slate-600"
-                                placeholder="Enter your password"
-                                required
-                            />
-                            <button
-                                type="button"
-                                onClick={() => setShowPassword(!showPassword)}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                            >
-                                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-300 ml-1">Confirm Password</label>
-                        <input
-                            type="password"
-                            value={confirmPassword}
-                            onChange={(e) => setConfirmPassword(e.target.value)}
-                            className="w-full bg-slate-950/50 border border-slate-700 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all text-white placeholder-slate-600"
-                            placeholder="Confirm your password"
-                            required
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+            <div className="max-w-md w-full space-y-8">
+                {/* Header */}
+                <div className="text-center">
+                    <div className="mx-auto flex justify-center">
+                        <img
+                            src="/images/bidsquire-logo.png"
+                            alt="Bidsquire"
+                            className="h-16 w-auto"
                         />
                     </div>
-
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-blue-500/20 transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Set Password & Activate'}
-                    </button>
-                </form>
-
-                <div className="mt-8 text-center">
-                    <p className="text-xs text-slate-600">
-                        Secured by BidSquire Cross-Cloud Authentication
+                    <h2 className="mt-6 text-3xl font-extrabold text-gray-900">
+                        Activate Your Account
+                    </h2>
+                    <p className="mt-2 text-sm text-gray-600">
+                        Set a secure password to access your dashboard
                     </p>
                 </div>
+
+                {/* Activation Form */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Set Password</CardTitle>
+                        <CardDescription>
+                            Create a password for your account
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        {error && (
+                            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+                                <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                                <p className="text-sm text-red-700">{error}</p>
+                            </div>
+                        )}
+
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="password">New Password</Label>
+                                <div className="relative">
+                                    <Input
+                                        id="password"
+                                        type={showPassword ? "text" : "password"}
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        placeholder="Enter your password"
+                                        required
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(!showPassword)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                                    >
+                                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="confirmPassword">Confirm Password</Label>
+                                <Input
+                                    id="confirmPassword"
+                                    type="password"
+                                    value={confirmPassword}
+                                    onChange={(e) => setConfirmPassword(e.target.value)}
+                                    placeholder="Confirm your password"
+                                    required
+                                />
+                            </div>
+
+                            <Button type="submit" className="w-full" disabled={loading}>
+                                {loading ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Activating...
+                                    </>
+                                ) : (
+                                    'Set Password & Activate'
+                                )}
+                            </Button>
+                        </form>
+                    </CardContent>
+                </Card>
             </div>
         </div>
     );
