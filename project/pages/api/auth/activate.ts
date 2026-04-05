@@ -103,15 +103,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // We check transaction history, not just current active status
     const hasUsedTrial = await databaseService.hasUsedTrial(user.id);
 
+    const MINIMUM_TRIAL_CREDITS = 100;
+
     if (!hasUsedTrial) {
          if (credits && typeof credits === 'number' && credits > 0) {
-              console.log(`Applying ${credits} trial credits to user ${email} (First time trial)`);
-              await databaseService.topUpCredits(user.id, credits, 'Provisioned via Activation', expiresInDays || null);
+              const appliedCredits = Math.max(credits, MINIMUM_TRIAL_CREDITS);
+              console.log(`Applying ${appliedCredits} trial credits to user ${email} (First time trial)`);
+              await databaseService.topUpCredits(user.id, appliedCredits, 'Provisioned via Activation', expiresInDays || null);
          } else {
               // Internal fallback if token doesn't have credits but they are eligible
-              // Default to 500 credits for all trial users (as per Paul's request)
               const creditSettings = await databaseService.getCreditSettings();
-              const initialCredits = typeof creditSettings.trial_credits === 'number' ? creditSettings.trial_credits : 500;
+              const initialCredits = Math.max(
+                typeof creditSettings.trial_credits === 'number' ? creditSettings.trial_credits : MINIMUM_TRIAL_CREDITS,
+                MINIMUM_TRIAL_CREDITS
+              );
               console.log(`Applying system default ${initialCredits} trial credits to user ${email}`);
               await databaseService.createUserCredits(user.id, initialCredits);
          }

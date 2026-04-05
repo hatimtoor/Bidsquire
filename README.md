@@ -194,7 +194,7 @@ See [TESTING_GUIDE.docx](TESTING_GUIDE.docx) for a full pre-production testing c
 | Fetch item from HiBid | 1 credit |
 | Complete research2 stage | 2 credits |
 
-Trial accounts start with 3 credits. Additional credits are purchased via Stripe.
+Trial accounts start with 100 credits. Additional credits are purchased via Stripe.
 
 ---
 
