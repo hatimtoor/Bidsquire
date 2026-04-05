@@ -2,22 +2,26 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-// ... imports
-import { Loader2, User, Lock, Save, CheckCircle, AlertCircle } from 'lucide-react';
+import { Loader2, User, Lock, Save, CheckCircle, ShoppingBag } from 'lucide-react';
 import Navbar from '@/components/layout/navbar';
 import { toast } from 'sonner';
 
 export default function ProfilePage() {
   const { user, isLoading, logout } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [isLoadingPassword, setIsLoadingPassword] = useState(false);
+  const [ebayConnected, setEbayConnected] = useState(false);
+  const [ebayUserId, setEbayUserId] = useState<string | null>(null);
+  const [isEbayLoading, setIsEbayLoading] = useState(false);
+  const [isEbayStatusLoading, setIsEbayStatusLoading] = useState(true);
 
   // Profile form state
   const [profileForm, setProfileForm] = useState({
@@ -38,6 +42,33 @@ export default function ProfilePage() {
       router.push('/auth/login');
     }
   }, [user, isLoading, router]);
+
+  // Load eBay connection status
+  useEffect(() => {
+    if (!user) return;
+    setIsEbayStatusLoading(true);
+    fetch('/api/ebay/status', { credentials: 'include' })
+      .then(r => r.json())
+      .then(data => {
+        setEbayConnected(data.connected || false);
+        setEbayUserId(data.ebayUserId || null);
+      })
+      .catch(() => {})
+      .finally(() => setIsEbayStatusLoading(false));
+  }, [user]);
+
+  // Handle redirect back from eBay OAuth
+  useEffect(() => {
+    const ebayParam = searchParams?.get('ebay');
+    if (ebayParam === 'connected') {
+      toast.success('eBay account connected successfully!');
+      setEbayConnected(true);
+    } else if (ebayParam === 'denied') {
+      toast.error('eBay connection was cancelled.');
+    } else if (ebayParam === 'error') {
+      toast.error('Failed to connect eBay account. Please try again.');
+    }
+  }, [searchParams]);
 
   // Load user profile data
   useEffect(() => {
@@ -83,6 +114,37 @@ export default function ProfilePage() {
       toast.error('An error occurred while updating profile');
     } finally {
       setIsLoadingProfile(false);
+    }
+  };
+
+  const handleConnectEbay = async () => {
+    setIsEbayLoading(true);
+    try {
+      const response = await fetch('/api/ebay/auth-url', { credentials: 'include' });
+      const data = await response.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        toast.error('Could not generate eBay authorization URL.');
+      }
+    } catch {
+      toast.error('Failed to connect to eBay.');
+    } finally {
+      setIsEbayLoading(false);
+    }
+  };
+
+  const handleDisconnectEbay = async () => {
+    setIsEbayLoading(true);
+    try {
+      await fetch('/api/ebay/disconnect', { method: 'POST', credentials: 'include' });
+      setEbayConnected(false);
+      setEbayUserId(null);
+      toast.success('eBay account disconnected.');
+    } catch {
+      toast.error('Failed to disconnect eBay account.');
+    } finally {
+      setIsEbayLoading(false);
     }
   };
 
@@ -297,7 +359,62 @@ export default function ProfilePage() {
             </CardContent>
           </Card>
 
-          {/* Messages Removed */}
+          {/* eBay Account Connection */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShoppingBag className="h-5 w-5" />
+                eBay Account
+              </CardTitle>
+              <CardDescription>
+                Connect your eBay seller account to create draft listings directly from finalized items
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isEbayStatusLoading ? (
+                <div className="flex items-center gap-2 text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-sm">Checking connection status...</span>
+                </div>
+              ) : ebayConnected ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-green-700 bg-green-50 rounded-md px-3 py-2">
+                    <CheckCircle className="h-4 w-4 flex-shrink-0" />
+                    <span className="text-sm font-medium">
+                      eBay account connected{ebayUserId ? ` (${ebayUserId})` : ''}
+                    </span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={handleDisconnectEbay}
+                    disabled={isEbayLoading}
+                    className="w-full border-red-200 text-red-600 hover:bg-red-50"
+                  >
+                    {isEbayLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Disconnect eBay Account
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-600">
+                    No eBay account connected. Connect your seller account to push finalized items as draft listings.
+                  </p>
+                  <Button
+                    onClick={handleConnectEbay}
+                    disabled={isEbayLoading}
+                    className="w-full bg-yellow-400 hover:bg-yellow-500 text-black font-semibold"
+                  >
+                    {isEbayLoading ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ShoppingBag className="mr-2 h-4 w-4" />
+                    )}
+                    Connect eBay Account
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Account Actions */}
           <Card>

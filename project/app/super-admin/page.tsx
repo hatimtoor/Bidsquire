@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,14 +11,13 @@ import {
   Camera,
   ShieldAlert
 } from 'lucide-react';
-import { UserAccount } from '@/types/auction';
+import { useUsers } from '@/hooks/queries';
 
 export default function SuperAdminPage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
 
-  const [users, setUsers] = useState<UserAccount[]>([]);
-  const [isLoadingData, setIsLoadingData] = useState(false);
+  const { data: users = [], isLoading: isLoadingData } = useUsers();
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -27,27 +26,6 @@ export default function SuperAdminPage() {
       router.push('/admin');
     }
   }, [user, isLoading, router]);
-
-  useEffect(() => {
-    if (user && user.role === 'super_admin') {
-      loadUsers();
-    }
-  }, [user]);
-
-  const loadUsers = async () => {
-    setIsLoadingData(true);
-    try {
-      const response = await fetch('/api/users');
-      const data = await response.json();
-      if (Array.isArray(data)) {
-        setUsers(data);
-      }
-    } catch (error) {
-      console.error('Error loading users:', error);
-    } finally {
-      setIsLoadingData(false);
-    }
-  };
 
   if (isLoading || !user || user.role !== 'super_admin') {
     return (

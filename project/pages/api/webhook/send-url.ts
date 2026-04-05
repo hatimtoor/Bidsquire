@@ -92,6 +92,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     console.log(`[API] Created placeholder item ${placeholderId} for URL: ${url_main}`);
 
+    // Fire lead notification (non-blocking)
+    if (adminId) {
+      databaseService.getUserById(adminId).then(async adminUser => {
+        if (!adminUser) return;
+        const { notifyAuctionFetched } = await import('@/services/lead-notifications');
+        await notifyAuctionFetched({
+          adminName: adminUser.name,
+          adminEmail: adminUser.email,
+          auctionUrl: url_main,
+          itemId: placeholderId,
+        });
+      }).catch(e => console.error('[Notify] auction fetch email failed:', e));
+    }
+
     const webhookUrl = 'https://sorcer.app.n8n.cloud/webhook/789023dc-a9bf-459c-8789-d9d0c993d1cb';
 
     // Send to n8n asynchronously with the placeholder item ID

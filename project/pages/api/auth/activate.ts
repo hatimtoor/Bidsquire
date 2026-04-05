@@ -16,11 +16,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     // 1. Verify Token (HMAC-SHA256)
-    // Must match the logic in Onboarding App
-    const secret = process.env.CROSS_APP_SECRET || 'temporary-dev-secret-change-me';
+    const secret = process.env.CROSS_APP_SECRET;
+
+    if (!secret) {
+      console.error('[Activate] CROSS_APP_SECRET is not set. Refusing activation.');
+      return res.status(500).json({ error: 'Server misconfiguration' });
+    }
 
     if (!token.includes('.')) {
-        return res.status(400).json({ error: 'Invalid token format' });
+      return res.status(400).json({ error: 'Invalid token format' });
     }
 
     const [payloadBase64, signature] = token.split('.');
@@ -34,8 +38,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .update(payloadBase64)
       .digest('hex');
 
-    // Timing-safe comparison recommended but strict equality ok for now
-    if (signature !== expectedSignature) {
+    // Timing-safe comparison prevents timing attacks
+    const sigBuffer = Buffer.from(signature, 'hex');
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+    const signaturesMatch =
+      sigBuffer.length === expectedBuffer.length &&
+      crypto.timingSafeEqual(sigBuffer, expectedBuffer);
+
+    if (!signaturesMatch) {
       return res.status(401).json({ error: 'Invalid signature / Token Modified' });
     }
 
@@ -46,7 +56,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(401).json({ error: 'Token has expired' });
     }
 
-    const { email, name, credits, expiresInDays } = payload;
+    // Enforce one-time use via jti (JWT ID).
+    // The onboarding app should include a unique `jti` in every token payload.
+    // We track used JTIs so the same activation link can't be replayed.
+    if (payload.jti) {
+      const alreadyUsed = await databaseService.isActivationTokenUsed(payload.jti);
+      if (alreadyUsed) {
+        return res.status(401).json({ error: 'Activation link has already been used' });
+      }
+    }
+
+    const { email, name, credits, expiresInDays, orgName } = payload;
 
     if (!email) {
         return res.status(400).json({ error: 'Invalid token payload' });
@@ -99,7 +119,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
          console.log(`User ${email} has already used a trial. Skipping credit provisioning.`);
     }
 
-    // 3. NO Item Stub Creation - Return URL for frontend pre-fill
+    // 3. Ensure user is assigned to an organization (create one if needed)
+    if (!user.orgId) {
+      const org = await databaseService.createOrganization(orgName || name || email.split('@')[0]);
+      await databaseService.setUserOrg(user.id, org.id);
+    }
+
+    // 4. Mark token as used so the same link can't be replayed
+    if (payload.jti) {
+      await databaseService.markActivationTokenUsed(payload.jti, payload.exp);
+    }
+
+    // 4. NO Item Stub Creation - Return URL for frontend pre-fill
     // We pass the URL back so the frontend can redirect the user to the dashboard with the URL pre-filled.
      let hibidUrl = payload.hibid_url;
 

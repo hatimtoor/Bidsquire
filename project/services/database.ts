@@ -275,6 +275,37 @@ class DatabaseService {
         ALTER TABLE users ADD COLUMN IF NOT EXISTS is_trial BOOLEAN DEFAULT FALSE
       `);
 
+      // Multi-tenancy: organizations table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS organizations (
+          id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+          name VARCHAR(255) NOT NULL,
+          slug VARCHAR(100) UNIQUE NOT NULL,
+          plan VARCHAR(50) NOT NULL DEFAULT 'trial',
+          is_active BOOLEAN DEFAULT TRUE,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await client.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id VARCHAR(255)
+      `);
+      await client.query(`
+        ALTER TABLE auction_items ADD COLUMN IF NOT EXISTS org_id VARCHAR(255)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(org_id)
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_auction_items_org_id ON auction_items(org_id)
+      `);
+
+      // eBay OAuth token columns
+      await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ebay_access_token  TEXT`);
+      await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ebay_refresh_token TEXT`);
+      await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ebay_token_expiry  TIMESTAMP WITH TIME ZONE`);
+      await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ebay_user_id       VARCHAR(255)`);
+
 
       // Create password_reset_tokens table
       await client.query(`
@@ -318,7 +349,7 @@ class DatabaseService {
   }
 
   // Get database connection
-  private async getClient(): Promise<PoolClient> {
+  async getClient(): Promise<PoolClient> {
     if (isBrowser) {
       throw new Error('Database service not available on client side');
     }
@@ -353,10 +384,10 @@ class DatabaseService {
       const passwordHash = await bcrypt.hash(user.password, salt);
 
       const result = await client.query(`
-        INSERT INTO users (id, name, email, password, role, created_at, updated_at, is_active, created_by, is_trial)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO users (id, name, email, password, role, created_at, updated_at, is_active, created_by, is_trial, org_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING *
-      `, [id, user.name, user.email, passwordHash, user.role, now, now, user.isActive, createdBy, user.isTrial || false]);
+      `, [id, user.name, user.email, passwordHash, user.role, now, now, user.isActive, createdBy, user.isTrial || false, user.orgId || null]);
 
       console.log('✅ User created successfully:', result.rows[0]);
       return this.mapUserFromDb(result.rows[0]);
@@ -405,6 +436,26 @@ class DatabaseService {
     const client = await this.getClient();
     try {
       const result = await client.query('SELECT * FROM users WHERE role = $1 ORDER BY created_at DESC', [role]);
+      return result.rows.map(row => this.mapUserFromDb(row));
+    } finally {
+      client.release();
+    }
+  }
+
+  async getTeamMembersByAdmin(adminId: string): Promise<UserAccount[]> {
+    if (isBrowser) {
+      throw new Error('Database service not available on client side');
+    }
+
+    this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const result = await client.query(`
+        SELECT * FROM users
+        WHERE role IN ('researcher', 'researcher2', 'photographer')
+        AND created_by = $1
+        ORDER BY created_at DESC
+      `, [adminId]);
       return result.rows.map(row => this.mapUserFromDb(row));
     } finally {
       client.release();
@@ -765,9 +816,9 @@ class DatabaseService {
           lead, auction_site_estimate, ai_description, ai_estimate, status, researcher_estimate,
           researcher_description, reference_urls, similar_urls, photographer_quantity, photographer_images,
           is_multiple_items, multiple_items_count, final_data, created_at, updated_at, assigned_to, notes, priority, tags,
-          parent_item_id, sub_item_number, photographer_notes, researcher_notes, researcher2_notes, admin_id
+          parent_item_id, sub_item_number, photographer_notes, researcher_notes, researcher2_notes, admin_id, org_id
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38
         ) RETURNING *
       `, [
         id, item.url, item.url_main || null, item.auctionName, item.lotNumber, item.images, item.mainImageUrl, item.sku, item.itemName,
@@ -775,7 +826,7 @@ class DatabaseService {
         item.aiEstimate, item.status, item.researcherEstimate, item.researcherDescription,
         item.referenceUrls, item.similarUrls, item.photographerQuantity, item.photographerImages,
         item.isMultipleItems || false, item.multipleItemsCount || 1, item.finalData,
-        now, now, item.assignedTo, item.notes, item.priority || 'medium', item.tags, item.parentItemId || null, item.subItemNumber || null, item.photographerNotes || null, item.researcherNotes || null, item.researcher2Notes || null, item.adminId || null
+        now, now, item.assignedTo, item.notes, item.priority || 'medium', item.tags, item.parentItemId || null, item.subItemNumber || null, item.photographerNotes || null, item.researcherNotes || null, item.researcher2Notes || null, item.adminId || null, item.orgId || null
       ]);
 
       return this.mapAuctionItemFromDb(result.rows[0]);
@@ -927,7 +978,10 @@ class DatabaseService {
       isActive: Boolean(row.isActive || row.is_active),
       isTrial: Boolean(row.is_trial),
       avatar: row.avatar,
-      createdBy: row.created_by
+      createdBy: row.created_by,
+      orgId: row.org_id || undefined,
+      ebayConnected: !!row.ebay_refresh_token,
+      ebayUserId: row.ebay_user_id || undefined,
     };
   }
 
@@ -969,7 +1023,8 @@ class DatabaseService {
       tags: row.tags || [],
       parentItemId: row.parent_item_id,
       subItemNumber: row.sub_item_number,
-      adminId: row.admin_id
+      adminId: row.admin_id,
+      orgId: row.org_id || undefined,
     };
   }
 
@@ -1393,6 +1448,201 @@ class DatabaseService {
       await client.query('DELETE FROM password_reset_tokens WHERE token = $1', [token]);
     } catch (error) {
       console.error('Error deleting token:', error);
+    } finally {
+      client.release();
+    }
+  }
+
+  // ── Activation Token One-Time-Use Tracking ─────────────────────────────
+  // Stores used JTIs so activation links can't be replayed.
+
+  async isActivationTokenUsed(jti: string): Promise<boolean> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      // Create table on first use (idempotent)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS used_activation_tokens (
+          jti VARCHAR(255) PRIMARY KEY,
+          used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          expires_at TIMESTAMP
+        )
+      `);
+      const result = await client.query(
+        'SELECT jti FROM used_activation_tokens WHERE jti = $1',
+        [jti]
+      );
+      return result.rows.length > 0;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markActivationTokenUsed(jti: string, expMs: number): Promise<void> {
+    if (isBrowser) return;
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS used_activation_tokens (
+          jti VARCHAR(255) PRIMARY KEY,
+          used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          expires_at TIMESTAMP
+        )
+      `);
+      await client.query(
+        `INSERT INTO used_activation_tokens (jti, expires_at)
+         VALUES ($1, to_timestamp($2 / 1000.0))
+         ON CONFLICT (jti) DO NOTHING`,
+        [jti, expMs]
+      );
+    } catch (error) {
+      console.error('Error marking activation token as used:', error);
+    } finally {
+      client.release();
+    }
+  }
+
+  // ── Organizations ────────────────────────────────────────────────────────
+
+  async createOrganization(name: string, plan: string = 'trial'): Promise<{ id: string; name: string; slug: string; plan: string }> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const id = crypto.randomUUID();
+      const result = await client.query(
+        `INSERT INTO organizations (id, name, slug, plan)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id, name, slug, plan`,
+        [id, name, slug, plan]
+      );
+      return result.rows[0];
+    } finally {
+      client.release();
+    }
+  }
+
+  async getOrganizationBySlug(slug: string): Promise<{ id: string; name: string; slug: string; plan: string } | null> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const result = await client.query('SELECT id, name, slug, plan FROM organizations WHERE slug = $1', [slug]);
+      return result.rows[0] || null;
+    } finally {
+      client.release();
+    }
+  }
+
+  async setUserOrg(userId: string, orgId: string): Promise<void> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      await client.query('UPDATE users SET org_id = $1 WHERE id = $2', [orgId, userId]);
+    } finally {
+      client.release();
+    }
+  }
+
+  async getAuctionItemsByOrg(orgId: string): Promise<AuctionItem[]> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const result = await client.query(
+        'SELECT * FROM auction_items WHERE org_id = $1 ORDER BY created_at DESC',
+        [orgId]
+      );
+      return result.rows.map(row => this.mapAuctionItemFromDb(row));
+    } finally {
+      client.release();
+    }
+  }
+
+  async getUsersByOrg(orgId: string): Promise<UserAccount[]> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const result = await client.query(
+        "SELECT * FROM users WHERE org_id = $1 AND role != 'super_admin' ORDER BY created_at DESC",
+        [orgId]
+      );
+      return result.rows.map(row => this.mapUserFromDb(row));
+    } finally {
+      client.release();
+    }
+  }
+
+  // ─── eBay OAuth Token Management ──────────────────────────────────────────
+
+  async saveEbayTokens(
+    userId: string,
+    tokens: { accessToken: string; refreshToken: string; expiresAt: Date; ebayUserId?: string }
+  ): Promise<void> {
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      await client.query(
+        `UPDATE users
+         SET ebay_access_token  = $1,
+             ebay_refresh_token = $2,
+             ebay_token_expiry  = $3,
+             ebay_user_id       = COALESCE($4, ebay_user_id),
+             updated_at         = CURRENT_TIMESTAMP
+         WHERE id = $5`,
+        [tokens.accessToken, tokens.refreshToken, tokens.expiresAt, tokens.ebayUserId || null, userId]
+      );
+    } finally {
+      client.release();
+    }
+  }
+
+  async getEbayTokens(userId: string): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: Date | null;
+    ebayUserId: string | null;
+  } | null> {
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const result = await client.query(
+        'SELECT ebay_access_token, ebay_refresh_token, ebay_token_expiry, ebay_user_id FROM users WHERE id = $1',
+        [userId]
+      );
+      if (!result.rows.length || !result.rows[0].ebay_refresh_token) return null;
+      const row = result.rows[0];
+      return {
+        accessToken: row.ebay_access_token,
+        refreshToken: row.ebay_refresh_token,
+        expiresAt: row.ebay_token_expiry ? new Date(row.ebay_token_expiry) : null,
+        ebayUserId: row.ebay_user_id || null,
+      };
+    } finally {
+      client.release();
+    }
+  }
+
+  async clearEbayTokens(userId: string): Promise<void> {
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      await client.query(
+        `UPDATE users
+         SET ebay_access_token  = NULL,
+             ebay_refresh_token = NULL,
+             ebay_token_expiry  = NULL,
+             ebay_user_id       = NULL,
+             updated_at         = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [userId]
+      );
     } finally {
       client.release();
     }

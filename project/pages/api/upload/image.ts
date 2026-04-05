@@ -31,8 +31,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       keepExtensions: true,
       maxFileSize: 10 * 1024 * 1024, // 10MB limit
       filter: ({ mimetype }) => {
-        // Only allow image files
-        return mimetype && mimetype.startsWith('image/');
+        return !!(mimetype && mimetype.startsWith('image/'));
       },
     });
 

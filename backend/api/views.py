@@ -2,11 +2,24 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from .models import WebhookData, AuctionItem
+from .serializers import AuctionItemSerializer
+from .auth import require_internal_secret
 import requests
 import json
 import base64
 import time
 import string
+import os
+
+# n8n webhook URLs — set these in your environment variables
+N8N_HIBID_WEBHOOK_URL = os.environ.get(
+    'N8N_HIBID_WEBHOOK_URL',
+    'https://sorcer.app.n8n.cloud/webhook/789023dc-a9bf-459c-8789-d9d0c993d1cb'
+)
+N8N_PHOTOGRAPHY_WEBHOOK_URL = os.environ.get(
+    'N8N_PHOTOGRAPHY_WEBHOOK_URL',
+    'https://sorcer.app.n8n.cloud/webhook/0be48928-c40c-4e16-a9f1-1e2fdf9ed9d2'
+)
 
 @api_view(['GET'])
 def hello_world(request):
@@ -39,6 +52,7 @@ def test_webhook_data(request):
     }, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@require_internal_secret
 def call_webhook(request):
     """
     Call n8n webhook with URL data - now just sends data without expecting immediate response
@@ -55,8 +69,7 @@ def call_webhook(request):
         print("Request headers:", dict(request.headers))
         print("URL received:", url_main)
         
-        # Hardcoded n8n Webhook URL - Direct and simple!
-        webhook_url = "https://sorcer.app.n8n.cloud/webhook/789023dc-a9bf-459c-8789-d9d0c993d1cb"
+        webhook_url = N8N_HIBID_WEBHOOK_URL
         
         print("Calling n8n webhook:", webhook_url)
         
@@ -107,6 +120,7 @@ def call_webhook(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
+@require_internal_secret
 def submit_photography(request):
     try:
         # Extract all required parameters from request
@@ -125,17 +139,17 @@ def submit_photography(request):
         quantity = int(request.data.get('quantity', 1))
         photos = request.data.get('photos', [])
 
-        # Webhook URL for photography submission
-        webhook_url = "https://sorcer.app.n8n.cloud/webhook/0be48928-c40c-4e16-a9f1-1e2fdf9ed9d2"
-        print(f"=== PHOTOGRAPHY WEBHOOK CALL ===")
-        print(f"Webhook URL: {webhook_url}")
-        print(f"Quantity: {quantity}")
-        print(f"SKU Base: {sku_base}")
+        webhook_url = N8N_PHOTOGRAPHY_WEBHOOK_URL
 
         # Generate SKU prefix from first letter of each of the first 3 words of auction_name and lot_number
         auction_words = [w for w in auction_name.split() if w.isalpha()]
         sku_prefix = ''.join([w[0].upper() for w in auction_words[:3]])
         sku_base = f"{sku_prefix}-{lot_number}"
+
+        print(f"=== PHOTOGRAPHY WEBHOOK CALL ===")
+        print(f"Webhook URL: {webhook_url}")
+        print(f"Quantity: {quantity}")
+        print(f"SKU Base: {sku_base}")
 
         # Prepare responses
         webhook_responses = []
@@ -448,6 +462,7 @@ def process_sku_data(data):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET'])
+@require_internal_secret
 def get_webhook_data(request):
     """
     Get webhook data for a specific SKU
@@ -489,6 +504,7 @@ def get_webhook_data(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 
 
 @api_view(['GET'])
+@require_internal_secret
 def get_hibid_items(request):
     """
     Get all processed HiBid items for the dashboard
@@ -540,4 +556,50 @@ def get_hibid_items(request):
         print("Error retrieving HiBid items:", str(e))
         return Response({
             'error': f'Error retrieving HiBid items: {str(e)}'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ── Auction Items CRUD ────────────────────────────────────────────────────────
+
+@api_view(['GET', 'POST'])
+@require_internal_secret
+def auction_items(request):
+    """List all auction items (optionally filtered by admin_id) or create one."""
+    if request.method == 'GET':
+        admin_id = request.query_params.get('adminId')
+        queryset = AuctionItem.objects.all()
+        if admin_id:
+            queryset = queryset.filter(admin_id=admin_id)
+        serializer = AuctionItemSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    # POST — create
+    serializer = AuctionItemSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET', 'PATCH', 'DELETE'])
+@require_internal_secret
+def auction_item_detail(request, item_id):
+    """Retrieve, update or delete a single auction item."""
+    try:
+        item = AuctionItem.objects.get(pk=item_id)
+    except AuctionItem.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == 'GET':
+        return Response(AuctionItemSerializer(item).data)
+
+    if request.method == 'PATCH':
+        serializer = AuctionItemSerializer(item, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # DELETE
+    item.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)

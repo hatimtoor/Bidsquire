@@ -9,6 +9,7 @@ interface User {
   email: string;
   role: 'super_admin' | 'admin' | 'researcher' | 'photographer' | 'researcher2';
   isTrial?: boolean;
+  orgId?: string;
 }
 
 interface AuthContextType {

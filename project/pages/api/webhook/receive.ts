@@ -147,12 +147,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           auctionSiteEstimate: processedData.estimate || undefined,
           auctionName: processedData.auction_name || undefined,
           mainImageUrl: processedData.main_image_url || undefined,
-          images: processedData.all_unique_image_urls ? processedData.all_unique_image_urls.split(',').filter(Boolean) : [],
+          images: Array.isArray(processedData.all_unique_image_urls)
+            ? processedData.all_unique_image_urls
+            : processedData.all_unique_image_urls
+              ? processedData.all_unique_image_urls.split(',').filter(Boolean)
+              : [],
           aiDescription: processedData.ai_response || undefined,
           status: 'research' as const, // Move from 'processing' to 'research'
           assignedTo: 'researcher',
           adminId: adminId || undefined,
-          adminEmail: adminEmail || undefined,
         };
 
         resultItem = await databaseService.updateAuctionItem(itemId, updateData);
@@ -182,12 +185,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 auctionSiteEstimate: processedData.estimate || undefined,
                 auctionName: processedData.auction_name || undefined,
                 mainImageUrl: processedData.main_image_url || undefined,
-                images: processedData.all_unique_image_urls ? processedData.all_unique_image_urls.split(',').filter(Boolean) : [],
+                images: Array.isArray(processedData.all_unique_image_urls)
+                  ? processedData.all_unique_image_urls
+                  : processedData.all_unique_image_urls
+                    ? processedData.all_unique_image_urls.split(',').filter(Boolean)
+                    : [],
                 aiDescription: processedData.ai_response || undefined,
                 status: 'research' as const,
                 assignedTo: 'researcher',
-                adminId: adminId, // Ensure admin match
-                adminEmail: adminEmail || undefined,
+                adminId: adminId,
                };
                resultItem = await databaseService.updateAuctionItem(fuzzyMatch.id, updateData);
             } else {

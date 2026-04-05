@@ -1,5 +1,8 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
+// Server-side only — never exposed to the browser
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
+
 export interface ApiResponse<T = any> {
   message: string;
   status: string;
@@ -13,13 +16,21 @@ export class ApiClient {
     this.baseUrl = baseUrl;
   }
 
+  private getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (INTERNAL_API_SECRET) {
+      headers['X-Internal-Secret'] = INTERNAL_API_SECRET;
+    }
+    return headers;
+  }
+
   async get<T>(endpoint: string): Promise<ApiResponse<T>> {
     try {
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getHeaders(),
       });
 
       if (!response.ok) {
@@ -37,9 +48,7 @@ export class ApiClient {
     try {
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getHeaders(),
         body: JSON.stringify(data),
       });
 

@@ -1,27 +1,34 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { databaseService } from '@/services/database';
+import { verifyToken } from '@/services/auth';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'GET') {
     try {
-      const { userId, userRole } = req.query;
+      const decoded: any = verifyToken(req);
+      const role = decoded?.role;
+      const orgId = decoded?.orgId;
 
       let items;
-      if (userRole === 'admin' && userId) {
-        // For admin users, only return items they created/fetched
-        items = await databaseService.getAuctionItemsByAdmin(userId as string);
-      } else if (userRole === 'photographer' && userId) {
-        // For photographers, return items created by their admin
-        const user = await databaseService.getUserById(userId as string);
-        if (user && user.createdBy) {
-          items = await databaseService.getAuctionItemsByAdmin(user.createdBy);
+      if (role === 'super_admin') {
+        // Super admin sees everything
+        items = await databaseService.getAuctionItems();
+      } else if (orgId) {
+        // Everyone else is scoped to their org
+        items = await databaseService.getAuctionItemsByOrg(orgId);
+      } else {
+        // No org assigned yet — fall back to admin_id scoping for legacy accounts
+        const { userId, userRole } = req.query;
+        if (userId) {
+          if (userRole === 'photographer') {
+            const user = await databaseService.getUserById(userId as string);
+            items = user?.createdBy ? await databaseService.getAuctionItemsByAdmin(user.createdBy) : [];
+          } else {
+            items = await databaseService.getAuctionItemsByAdmin(userId as string);
+          }
         } else {
-          // If no creator found, return empty list (or all items if that's safer, but strict is better)
           items = [];
         }
-      } else {
-        // For other users (researchers), return all items
-        items = await databaseService.getAuctionItems();
       }
 
       res.status(200).json(items);
@@ -31,8 +38,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   } else if (req.method === 'POST') {
     try {
-      const itemData = req.body;
-      const adminId = itemData.adminId as string | undefined;
+      const decoded: any = verifyToken(req);
+      const itemData = {
+        ...req.body,
+        orgId: req.body.orgId || decoded?.orgId || null,
+      };
 
       // Manual item creation is free. No credit deduction needed.
 

@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'rest_framework',
     # 'corsheaders',  # Temporarily disabled
     'api',
+    'django.contrib.postgres',
 ]
 
 MIDDLEWARE = [

@@ -1,29 +1,35 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { databaseService } from '@/services/database';
+import { verifyToken } from '@/services/auth';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
     try {
       const { userData, createdBy } = req.body;
-      
+
       // Validate input
       if (!userData || !createdBy) {
-        return res.status(400).json({ 
-          error: 'User data and createdBy are required.' 
+        return res.status(400).json({
+          error: 'User data and createdBy are required.'
         });
       }
 
       // Validate required fields
       if (!userData.name || !userData.email || !userData.password || !userData.role) {
-        return res.status(400).json({ 
-          error: 'Name, email, password, and role are required.' 
+        return res.status(400).json({
+          error: 'Name, email, password, and role are required.'
         });
       }
+
+      // Inherit org from the creating admin's JWT
+      const decoded: any = verifyToken(req);
+      const orgId = decoded?.orgId || null;
 
       // Ensure users are active by default unless explicitly disabled
       const userDataWithDefaults = {
         ...userData,
-        isActive: userData.isActive !== false
+        isActive: userData.isActive !== false,
+        orgId,
       };
 
       // Create user with credits

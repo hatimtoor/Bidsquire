@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -12,18 +12,29 @@ import { Loader2, ExternalLink, Image, Calendar, Tag, DollarSign, RefreshCw, Plu
 import Navbar from '@/components/layout/navbar';
 import ImageUpload from '@/components/ImageUpload';
 import ItemCard from '@/components/ItemCard';
-import { dataStore } from '@/services/dataStore';
+import { dataStore } from '@/services/dataStore'; // used for createSubItems (no mutation hook yet)
 import { AuctionItem } from '@/types/auction';
 import { toast } from 'sonner';
+import { useAuctionItems } from '@/hooks/queries';
+import { useUpdateItem, useDeleteItem, useMoveItem } from '@/hooks/mutations';
 
 export default function PhotographerPage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
-  const [items, setItems] = useState<AuctionItem[]>([]);
-  const [isLoadingData, setIsLoadingData] = useState(true);
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<AuctionItem>>({});
   const [newImageUrl, setNewImageUrl] = useState('');
+
+  const { data: allItems = [], isLoading: isLoadingData, refetch } = useAuctionItems(user?.id, user?.role);
+  const updateItem = useUpdateItem();
+  const deleteItemMutation = useDeleteItem();
+  const moveItem = useMoveItem();
+
+  // Filter to photographer items
+  const items = useMemo(
+    () => allItems.filter(item => item.assignedTo === 'photographer'),
+    [allItems]
+  );
 
   // Check authentication
   useEffect(() => {
@@ -33,28 +44,6 @@ export default function PhotographerPage() {
       router.push('/');
     }
   }, [user, isLoading, router]);
-
-  // Load data on component mount
-  useEffect(() => {
-    if (user && user.role === 'photographer') {
-      loadItems();
-    }
-  }, [user]);
-
-  const loadItems = async () => {
-    try {
-      const allItems = await dataStore.getItems(user?.id, user?.role);
-      // Show only items assigned to the photographer role
-      const photographyItems = allItems.filter(item =>
-        item.assignedTo === 'photographer'
-      );
-      setItems(photographyItems);
-      setIsLoadingData(false);
-    } catch (error) {
-      console.error('Error loading items:', error);
-      setIsLoadingData(false);
-    }
-  };
 
   const startEditing = (item: AuctionItem) => {
     setEditingItem(item.id);
@@ -100,7 +89,7 @@ export default function PhotographerPage() {
 
   const createSubItems = async (itemId: string) => {
     try {
-      const item = dataStore.getItem(itemId);
+      const item = allItems.find(i => i.id === itemId);
       if (!item) {
         toast.error('Item not found');
         return;
@@ -117,8 +106,6 @@ export default function PhotographerPage() {
         return;
       }
 
-      // Check if sub-items already exist
-      const allItems = await dataStore.getItems(user?.id, user?.role);
       const existingSubItems = allItems.filter(i => i.parentItemId === itemId);
       if (existingSubItems.length > 0) {
         const confirmCreate = window.confirm(
@@ -128,7 +115,7 @@ export default function PhotographerPage() {
       }
 
       const subItems = await dataStore.createSubItems(itemId, subItemCount);
-      await loadItems();
+      refetch();
 
       toast.success(`Successfully created ${subItems.length} sub-items:\n${subItems.map(si => `• ${si.itemName}`).join('\n')}\n\n🔥 All items (parent + sub-items) have been set to HIGH priority!`);
     } catch (error) {
@@ -141,34 +128,19 @@ export default function PhotographerPage() {
     return items.filter(item => item.parentItemId === parentItemId);
   };
 
-  const saveEdit = async (itemId: string) => {
-    try {
-      console.log('Saving edit for item:', itemId);
-      console.log('Edit form data:', editForm);
-
-      // Ensure photographerImages is properly set
-      const updates = {
-        ...editForm,
-        photographerImages: editForm.photographerImages || []
-      };
-
-      console.log('Updates to save:', updates);
-
-      const updatedItem = await dataStore.updateItem(itemId, updates);
-      if (updatedItem) {
-        console.log('Item updated successfully:', updatedItem);
-        setEditingItem(null);
-        setEditForm({});
-        await loadItems();
-        // Show success message
-        toast.success('Photography details saved successfully!');
-      } else {
-        toast.error('Failed to save photography details. Please try again.');
+  const saveEdit = (itemId: string) => {
+    const updates = { ...editForm, photographerImages: editForm.photographerImages || [] };
+    updateItem.mutate(
+      { id: itemId, updates },
+      {
+        onSuccess: () => {
+          setEditingItem(null);
+          setEditForm({});
+          toast.success('Photography details saved successfully!');
+        },
+        onError: () => toast.error('Failed to save photography details. Please try again.'),
       }
-    } catch (error) {
-      console.error('Error saving item:', error);
-      toast.error('Error saving photography details. Please try again.');
-    }
+    );
   };
 
   const cancelEdit = () => {
@@ -176,13 +148,11 @@ export default function PhotographerPage() {
     setEditForm({});
   };
 
-  const addImage = async (itemId: string) => {
+  const addImage = (itemId: string) => {
     if (!newImageUrl.trim()) {
       toast.error('Please enter an image URL.');
       return;
     }
-
-    // Basic URL validation
     try {
       new URL(newImageUrl.trim());
     } catch {
@@ -190,99 +160,60 @@ export default function PhotographerPage() {
       return;
     }
 
-    try {
-      console.log('Adding image to item:', itemId);
-      console.log('New image URL:', newImageUrl.trim());
+    const item = allItems.find(i => i.id === itemId);
+    if (!item) return;
 
-      const item = dataStore.getItem(itemId);
-      if (item) {
-        const currentImages = item.photographerImages || [];
-        const updatedImages = [...currentImages, newImageUrl.trim()];
-
-        console.log('Current images:', currentImages);
-        console.log('Updated images:', updatedImages);
-
-        // Update the editForm state to reflect the new image
-        setEditForm(prev => ({
-          ...prev,
-          photographerImages: updatedImages
-        }));
-
-        // Also update the item in the dataStore
-        await dataStore.updateItem(itemId, { photographerImages: updatedImages });
-        setNewImageUrl('');
-        await loadItems();
-
-        // Show success message
-        toast.success('Image URL added successfully!');
+    const updatedImages = [...(item.photographerImages || []), newImageUrl.trim()];
+    setEditForm(prev => ({ ...prev, photographerImages: updatedImages }));
+    updateItem.mutate(
+      { id: itemId, updates: { photographerImages: updatedImages } },
+      {
+        onSuccess: () => {
+          setNewImageUrl('');
+          toast.success('Image URL added successfully!');
+        },
+        onError: () => toast.error('Error adding image URL. Please try again.'),
       }
-    } catch (error) {
-      console.error('Error adding image:', error);
-      toast.error('Error adding image URL. Please try again.');
-    }
+    );
   };
 
-  const removeImage = async (itemId: string, imageIndex: number) => {
-    try {
-      const item = dataStore.getItem(itemId);
-      if (item && item.photographerImages) {
-        const updatedImages = item.photographerImages.filter((_, index) => index !== imageIndex);
+  const removeImage = (itemId: string, imageIndex: number) => {
+    const item = allItems.find(i => i.id === itemId);
+    if (!item?.photographerImages) return;
 
-        // Update the editForm state to reflect the removed image
-        setEditForm(prev => ({
-          ...prev,
-          photographerImages: updatedImages
-        }));
-
-        // Update the item in the dataStore
-        await dataStore.updateItem(itemId, { photographerImages: updatedImages });
-        await loadItems();
-
-        // Show success message
-        toast.success('Image removed successfully!');
+    const updatedImages = item.photographerImages.filter((_, index) => index !== imageIndex);
+    setEditForm(prev => ({ ...prev, photographerImages: updatedImages }));
+    updateItem.mutate(
+      { id: itemId, updates: { photographerImages: updatedImages } },
+      {
+        onSuccess: () => toast.success('Image removed successfully!'),
+        onError: () => toast.error('Error removing image. Please try again.'),
       }
-    } catch (error) {
-      console.error('Error removing image:', error);
-      toast.error('Error removing image. Please try again.');
-    }
+    );
   };
 
-  const moveToNextStatus = async (itemId: string) => {
-    try {
-      // Get the current item to check if it exists
-      const currentItem = dataStore.getItem(itemId);
-      if (!currentItem) {
-        toast.error('Item not found. Please refresh and try again.');
-        return;
-      }
-
-      // Check if the item has been assigned to the photographer role
-      if (currentItem.assignedTo !== 'photographer') {
-        toast.error('You can only move items to the next status if they are assigned to the photographer role.');
-        return;
-      }
-
-      // Proceed with moving to next status
-      if (await dataStore.moveItemToNextStatus(itemId, user?.id || '', user?.name || '')) {
-        await loadItems();
-        toast.success('Item moved to Research 2 stage successfully!');
-      } else {
-        toast.error('Failed to move item to next status. Please try again.');
-      }
-    } catch (error) {
-      console.error('Error moving item to next status:', error);
-      toast.error('Error moving item to next status. Please try again.');
+  const moveToNextStatus = (itemId: string) => {
+    const currentItem = allItems.find(i => i.id === itemId);
+    if (!currentItem) {
+      toast.error('Item not found. Please refresh and try again.');
+      return;
     }
+    if (currentItem.assignedTo !== 'photographer') {
+      toast.error('You can only move items assigned to the photographer role.');
+      return;
+    }
+    moveItem.mutate(
+      { itemId, userId: user?.id || '', userName: user?.name || '' },
+      {
+        onSuccess: () => toast.success('Item moved to Research 2 stage successfully!'),
+        onError: () => toast.error('Failed to move item to next status. Please try again.'),
+      }
+    );
   };
 
-  const deleteItem = async (itemId: string) => {
+  const handleDeleteItem = (itemId: string) => {
     if (window.confirm('Are you sure you want to delete this item?')) {
-      try {
-        await dataStore.deleteItem(itemId);
-        await loadItems();
-      } catch (error) {
-        console.error('Error deleting item:', error);
-      }
+      deleteItemMutation.mutate(itemId);
     }
   };
 
@@ -408,7 +339,7 @@ export default function PhotographerPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={loadItems}
+                onClick={() => refetch()}
               >
                 <RefreshCw className="h-4 w-4" />
               </Button>

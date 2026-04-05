@@ -32,7 +32,7 @@ export default function LoginPage() {
 
       if (success) {
         toast.success('Logged in successfully');
-        const prefillUrl = searchParams.get('prefillUrl');
+        const prefillUrl = searchParams?.get('prefillUrl');
         if (prefillUrl) {
           // Direct to admin dashboard with the URL
           router.push(`/admin?prefillUrl=${encodeURIComponent(prefillUrl)}`);

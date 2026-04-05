@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ExternalLink, Trash2, Edit3, FileText, Award, Camera, Users, Tag, X, Image, ArrowRight, Plus } from 'lucide-react';
+import { ExternalLink, Trash2, Edit3, FileText, Award, Camera, Users, Tag, X, Image, ArrowRight, Plus, Sparkles, Loader2 } from 'lucide-react';
 import { AuctionItem } from '@/types/auction';
 
 interface ItemCardProps {
@@ -17,12 +17,15 @@ interface ItemCardProps {
   onMoveToNext?: (itemId: string) => void;
   onEbayDraft?: (item: AuctionItem) => void;
   onCreateSubItems?: (itemId: string) => void;
+  onAiResearch?: (itemId: string) => void;
+  isAiResearching?: boolean;
   showStatusDropdown?: boolean;
   showEditButton?: boolean;
   showDeleteButton?: boolean;
   showMoveToNextButton?: boolean;
   showEbayDraftButton?: boolean;
   showCreateSubItemsButton?: boolean;
+  showAiResearchButton?: boolean;
   userRole?: string;
 }
 
@@ -35,12 +38,15 @@ export default function ItemCard({
   onMoveToNext,
   onEbayDraft,
   onCreateSubItems,
+  onAiResearch,
+  isAiResearching = false,
   showStatusDropdown = false,
   showEditButton = false,
   showDeleteButton = false,
   showMoveToNextButton = false,
   showEbayDraftButton = false,
   showCreateSubItemsButton = false,
+  showAiResearchButton = false,
   userRole
 }: ItemCardProps) {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -357,6 +363,26 @@ export default function ItemCard({
               )}
             </div>
 
+            {/* AI Research Button */}
+            {showAiResearchButton && onAiResearch && (
+              <Button
+                variant="outline"
+                className="w-full border-purple-300 text-purple-700 hover:bg-purple-50"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAiResearch(item.id);
+                }}
+                disabled={isAiResearching}
+              >
+                {isAiResearching ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="mr-2 h-4 w-4" />
+                )}
+                {isAiResearching ? 'AI Researching...' : 'AI Research (1 credit)'}
+              </Button>
+            )}
+
             {/* Move to Next Status Button */}
             {showMoveToNextButton && onMoveToNext && (
               <Button
@@ -406,8 +432,8 @@ export default function ItemCard({
 
       {/* Detailed Item Modal */}
       {isDetailModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={closeDetailModal}>
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-2xl font-semibold text-gray-900">
@@ -538,6 +564,14 @@ export default function ItemCard({
                         <p className="text-gray-500 text-sm mt-1">{item.researcher2Description}</p>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* General Notes */}
+                {item.notes && (
+                  <div className="mt-4 pt-4 border-t">
+                    <h4 className="font-medium text-gray-700 mb-1">📝 General Notes</h4>
+                    <p className="text-gray-600 text-sm whitespace-pre-wrap">{item.notes}</p>
                   </div>
                 )}
 

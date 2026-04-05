@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.postgres.fields import ArrayField
 import json
 
 class WebhookData(models.Model):
@@ -87,38 +88,54 @@ class HiBidItem(models.Model):
 
 class AuctionItem(models.Model):
     """
-    Store auction item information
+    Auction item workflow record — maps to the auction_items PostgreSQL table.
+    managed=False so Django's migration framework leaves the table alone
+    (schema is owned by postgres-init/init-database.sql).
     """
-    sku = models.CharField(max_length=100, unique=True, db_index=True)
-    auction_name = models.CharField(max_length=200)
-    item_name = models.CharField(max_length=200)
-    lot_number = models.CharField(max_length=50)
-    description = models.TextField(blank=True)
-    lead = models.CharField(max_length=200, blank=True)
-    category = models.CharField(max_length=100, blank=True)
-    auction_site_estimate = models.CharField(max_length=100, blank=True)
-    ai_estimate = models.CharField(max_length=100, blank=True)
-    ai_description = models.TextField(blank=True)
-    researcher_estimate = models.CharField(max_length=100, blank=True)
-    researcher_description = models.TextField(blank=True)
-    reference_urls = models.JSONField(default=list)
-    photographer_quantity = models.IntegerField(default=1)
-    photographer_images = models.JSONField(default=list)
-    hibid_item = models.ForeignKey(HiBidItem, on_delete=models.SET_NULL, null=True, blank=True, related_name='auction_items')
-    status = models.CharField(max_length=20, choices=[
-        ('research', 'Research'),
-        ('waiting', 'Waiting'),
-        ('winning', 'Winning'),
-        ('photography', 'Photography'),
-        ('research2', 'Research 2'),
-        ('finalized', 'Finalized')
-    ], default='research')
+    id = models.CharField(max_length=255, primary_key=True)
+    url = models.TextField(blank=True, null=True)
+    url_main = models.TextField(blank=True, null=True)
+    auction_name = models.CharField(max_length=255, blank=True, null=True)
+    lot_number = models.CharField(max_length=100, blank=True, null=True)
+    images = ArrayField(models.TextField(), default=list, blank=True, null=True)
+    main_image_url = models.TextField(blank=True, null=True)
+    sku = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    item_name = models.CharField(max_length=255, blank=True, null=True)
+    category = models.CharField(max_length=100, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    lead = models.CharField(max_length=200, blank=True, null=True)
+    auction_site_estimate = models.CharField(max_length=100, blank=True, null=True)
+    ai_description = models.TextField(blank=True, null=True)
+    ai_estimate = models.CharField(max_length=100, blank=True, null=True)
+    status = models.CharField(max_length=50)
+    researcher_estimate = models.CharField(max_length=100, blank=True, null=True)
+    researcher_description = models.TextField(blank=True, null=True)
+    reference_urls = ArrayField(models.TextField(), default=list, blank=True, null=True)
+    similar_urls = ArrayField(models.TextField(), default=list, blank=True, null=True)
+    photographer_quantity = models.IntegerField(default=1, null=True)
+    photographer_images = ArrayField(models.TextField(), default=list, blank=True, null=True)
+    is_multiple_items = models.BooleanField(default=False, null=True)
+    multiple_items_count = models.IntegerField(default=1, null=True)
+    final_data = models.JSONField(default=dict, blank=True, null=True)
+    assigned_to = models.CharField(max_length=255, blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    photographer_notes = models.TextField(blank=True, null=True)
+    researcher_notes = models.TextField(blank=True, null=True)
+    researcher2_notes = models.TextField(blank=True, null=True)
+    priority = models.CharField(max_length=20, default='medium', null=True)
+    tags = ArrayField(models.TextField(), default=list, blank=True, null=True)
+    parent_item_id = models.CharField(max_length=255, blank=True, null=True)
+    sub_item_number = models.IntegerField(blank=True, null=True)
+    admin_id = models.CharField(max_length=255, blank=True, null=True)
+    hibid_item = models.ForeignKey(HiBidItem, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name='auction_items', db_column='hibid_item_id')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'auction_items'
         ordering = ['-created_at']
-    
+        managed = False  # Table managed by postgres-init/init-database.sql
+
     def __str__(self):
         return f"{self.item_name} - {self.sku}"

@@ -13,6 +13,8 @@ media/
 .env.local
 .env.prod
 .env.staging
+.env.production
+.env.test
 admin-credentials.txt
 
 # Python
@@ -121,3 +123,16 @@ node_modules/
 
 # TernJS port file
 .tern-port
+
+# Claude Code assistant memory
+.claude/
+
+# Generated documentation and scripts
+Bidsquire_Engineering_Improvement_Report.docx
+Bidsquire_Setup_Guide.docx
+Bidsquire_System_Analysis.docx
+generate_improvement_report.py
+generate_setup_doc.py
+
+# Database env
+database.env

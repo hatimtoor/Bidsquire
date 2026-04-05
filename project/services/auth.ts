@@ -35,6 +35,7 @@ export function generateToken(user: any) {
       id: user.id,
       email: user.email,
       role: user.role,
+      orgId: user.orgId || null,
     },
     JWT_SECRET,
     {

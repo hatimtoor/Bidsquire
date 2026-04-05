@@ -37,6 +37,9 @@ export interface AuctionItem {
   subItemNumber?: number; // For sub-items, the number (1, 2, 3, etc.)
   adminId?: string; // ID of the admin who fetched/created this item
   adminEmail?: string; // Email of the admin who fetched/created this item
+  orgId?: string; // Organization this item belongs to
+  researcher2Estimate?: string;
+  researcher2Description?: string;
 }
 
 export interface UserAccount {
@@ -51,6 +54,9 @@ export interface UserAccount {
   isTrial?: boolean;
   avatar?: string;
   createdBy?: string;
+  orgId?: string;
+  ebayConnected?: boolean;
+  ebayUserId?: string;
 }
 
 export interface WorkflowStep {

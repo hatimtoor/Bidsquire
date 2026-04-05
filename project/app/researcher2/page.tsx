@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -14,14 +14,13 @@ import { Loader2, ExternalLink, Image, Calendar, Tag, DollarSign, RefreshCw, Plu
 import { toast } from 'sonner';
 import Navbar from '@/components/layout/navbar';
 import ItemCard from '@/components/ItemCard';
-import { dataStore } from '@/services/dataStore';
 import { AuctionItem } from '@/types/auction';
+import { useAuctionItems } from '@/hooks/queries';
+import { useUpdateItem, useDeleteItem, useMoveItem } from '@/hooks/mutations';
 
 export default function Researcher2Page() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
-  const [items, setItems] = useState<AuctionItem[]>([]);
-  const [isLoadingData, setIsLoadingData] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<AuctionItem>>({});
@@ -40,6 +39,45 @@ export default function Researcher2Page() {
     categoryId3: ''
   });
 
+  const { data: allItems = [], isLoading: isLoadingData, refetch } = useAuctionItems(user?.id, user?.role);
+  const updateItem = useUpdateItem();
+  const deleteItemMutation = useDeleteItem();
+  const moveItem = useMoveItem();
+
+  const [aiResearchingItemId, setAiResearchingItemId] = useState<string | null>(null);
+
+  const runAiResearch = async (itemId: string) => {
+    setAiResearchingItemId(itemId);
+    try {
+      const response = await fetch('/api/webhook/send-ai-research', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId }),
+      });
+      const data = await response.json();
+
+      if (response.status === 402) {
+        toast.error('Not enough credits for AI research. You need at least 1 credit.');
+        return;
+      }
+      if (!response.ok) {
+        toast.error(data.error || 'AI research failed.');
+        return;
+      }
+
+      if (data.research) {
+        toast.success(`AI research complete! ${data.ebayResultsFound > 0 ? `Found ${data.ebayResultsFound} comparable eBay listings.` : 'Estimated from AI knowledge.'} 1 credit used.`);
+        refetch();
+      } else {
+        toast.success('AI research submitted. Results will appear shortly — refresh in a few seconds.');
+      }
+    } catch (error) {
+      toast.error('Failed to connect to AI research service.');
+    } finally {
+      setAiResearchingItemId(null);
+    }
+  };
+
   // Check authentication
   useEffect(() => {
     if (!isLoading && !user) {
@@ -49,54 +87,18 @@ export default function Researcher2Page() {
     }
   }, [user, isLoading, router]);
 
-  // Load data on component mount
-  useEffect(() => {
-    if (user && user.role === 'researcher2') {
-      loadItems();
-    }
-  }, [user]);
-
-  const loadItems = async () => {
-    try {
-      const allItems = await dataStore.getItems(user?.id, user?.role);
-      console.log('🔍 Researcher2 loadItems - all items:', allItems);
-      // Show only items assigned to the researcher2 role
-      const research2Items = allItems.filter(item =>
-        item.assignedTo === 'researcher2'
-      );
-      console.log('🔍 Researcher2 loadItems - filtered items:', research2Items);
-      console.log('🔍 Researcher2 loadItems - items with assignedTo researcher2:', allItems.filter(item => item.assignedTo === 'researcher2'));
-      setItems(research2Items);
-      setIsLoadingData(false);
-    } catch (error) {
-      console.error('Error loading items:', error);
-      setIsLoadingData(false);
-    }
-  };
-
-  const handleSearch = async (term: string) => {
-    setSearchTerm(term);
-    try {
-      const allItems = await dataStore.getItems(user?.id, user?.role);
-      const research2Items = allItems.filter(item =>
-        item.assignedTo === 'researcher2'
-      );
-
-      if (term.trim()) {
-        const filtered = research2Items.filter(item =>
-          item.itemName?.toLowerCase().includes(term.toLowerCase()) ||
-          item.description?.toLowerCase().includes(term.toLowerCase()) ||
-          item.category?.toLowerCase().includes(term.toLowerCase()) ||
-          item.auctionName?.toLowerCase().includes(term.toLowerCase())
-        );
-        setItems(filtered);
-      } else {
-        setItems(research2Items);
-      }
-    } catch (error) {
-      console.error('Error searching items:', error);
-    }
-  };
+  // Filter to researcher2 items, then apply search term
+  const items = useMemo(() => {
+    const research2Items = allItems.filter(item => item.assignedTo === 'researcher2');
+    if (!searchTerm.trim()) return research2Items;
+    const term = searchTerm.toLowerCase();
+    return research2Items.filter(item =>
+      item.itemName?.toLowerCase().includes(term) ||
+      item.description?.toLowerCase().includes(term) ||
+      item.category?.toLowerCase().includes(term) ||
+      item.auctionName?.toLowerCase().includes(term)
+    );
+  }, [allItems, searchTerm]);
 
   const startEditing = (item: AuctionItem) => {
     setEditingItem(item.id);
@@ -110,17 +112,17 @@ export default function Researcher2Page() {
     });
   };
 
-  const saveEdit = async (itemId: string) => {
-    try {
-      const updatedItem = await dataStore.updateItem(itemId, editForm);
-      if (updatedItem) {
-        setEditingItem(null);
-        setEditForm({});
-        await loadItems();
+  const saveEdit = (itemId: string) => {
+    updateItem.mutate(
+      { id: itemId, updates: editForm },
+      {
+        onSuccess: () => {
+          setEditingItem(null);
+          setEditForm({});
+        },
+        onError: (error) => console.error('Error saving item:', error),
       }
-    } catch (error) {
-      console.error('Error saving item:', error);
-    }
+    );
   };
 
   const cancelEdit = () => {
@@ -157,28 +159,35 @@ export default function Researcher2Page() {
     });
   };
 
-  const moveToNextStatus = async (itemId: string) => {
-    try {
-      if (await dataStore.moveItemToNextStatus(itemId, user?.id || '', user?.name || '')) {
-        await loadItems();
+  const moveToNextStatus = (itemId: string) => {
+    moveItem.mutate(
+      { itemId, userId: user?.id || '', userName: user?.name || '' },
+      {
+        onError: (error: any) => {
+          if (error?.error === 'INSUFFICIENT_CREDITS') {
+            toast.error('Insufficient credits to complete this stage. Please ask your admin to top up.');
+          } else {
+            toast.error('Failed to move item forward.');
+          }
+        },
       }
-    } catch (error) {
-      console.error('Error moving item to next status:', error);
-    }
+    );
   };
 
   const createEbayDraft = (item: AuctionItem) => {
     setSelectedItemForDraft(item);
+    // Pre-fill from existing finalData if researcher2 already submitted a draft
+    const existing = item.finalData as any;
     setEbayDraft({
-      title: item.itemName || '',
-      description: item.description || item.researcherDescription || '',
-      condition: 'Used',
-      listingType: 'auction',
-      startingPrice: item.researcherEstimate || '',
-      fixedPrice: '',
-      categoryId: '',
-      categoryId2: '',
-      categoryId3: ''
+      title: existing?.title || item.itemName || '',
+      description: existing?.description || item.researcherDescription || item.description || '',
+      condition: existing?.condition || 'Used',
+      listingType: (existing?.listingType as 'auction' | 'fixed') || 'auction',
+      startingPrice: existing?.startingPrice || item.researcherEstimate || '',
+      fixedPrice: existing?.fixedPrice || '',
+      categoryId: existing?.categoryId || '',
+      categoryId2: existing?.categoryId2 || '',
+      categoryId3: existing?.categoryId3 || '',
     });
     setIsEbayDraftModalOpen(true);
   };
@@ -206,16 +215,19 @@ export default function Researcher2Page() {
         createdAt: new Date()
       };
 
-      // Update the item with draft data
-      await dataStore.updateItem(selectedItemForDraft.id, {
-        finalData: draftData,
-        notes: `eBay listing draft created by ${user?.name} on ${new Date().toLocaleDateString()}`
+      // Update item with draft data and move to admin_review for approval
+      updateItem.mutate({
+        id: selectedItemForDraft.id,
+        updates: {
+          status: 'admin_review',
+          finalData: draftData,
+          notes: `eBay listing draft created by ${user?.name} on ${new Date().toLocaleDateString()}`
+        }
       });
 
-      toast.success('eBay listing draft created successfully! Sent for admin approval.');
+      toast.success('Draft submitted for admin approval!');
       setIsEbayDraftModalOpen(false);
       setSelectedItemForDraft(null);
-      await loadItems();
     } catch (error) {
       console.error('Error creating eBay draft:', error);
       toast.error('Error creating eBay draft. Please try again.');
@@ -223,14 +235,9 @@ export default function Researcher2Page() {
   };
 
 
-  const deleteItem = async (itemId: string) => {
+  const handleDeleteItem = (itemId: string) => {
     if (window.confirm('Are you sure you want to delete this item?')) {
-      try {
-        await dataStore.deleteItem(itemId);
-        await loadItems();
-      } catch (error) {
-        console.error('Error deleting item:', error);
-      }
+      deleteItemMutation.mutate(itemId);
     }
   };
 
@@ -283,7 +290,12 @@ export default function Researcher2Page() {
 
   // All items are already filtered to researcher2 role, so use them directly
   const myAssignedItems = items; // All items shown are assigned to researcher2 role
-  const stats = dataStore.getDashboardStats(user?.id);
+  const stats = {
+    total: items.length,
+    research2: items.filter(i => i.status === 'research2').length,
+    myItems: items.filter(i => i.assignedTo === user?.id).length,
+    overdue: 0,
+  };
 
   // Separate items by priority
   const highPriorityItems = items.filter(item => item.priority === 'high');
@@ -357,14 +369,14 @@ export default function Researcher2Page() {
               <Input
                 placeholder="Search items..."
                 value={searchTerm}
-                onChange={(e) => handleSearch(e.target.value)}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="flex-1"
               />
               <Button
                 variant="outline"
                 onClick={() => {
                   setSearchTerm('');
-                  loadItems();
+                  refetch();
                 }}
               >
                 Clear
@@ -390,7 +402,7 @@ export default function Researcher2Page() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={loadItems}
+                  onClick={() => refetch()}
                 >
                   <RefreshCw className="h-4 w-4" />
                 </Button>
@@ -438,8 +450,11 @@ export default function Researcher2Page() {
                             }
                           }}
                           onMoveToNext={moveToNextStatus}
+                          onAiResearch={runAiResearch}
+                          isAiResearching={aiResearchingItemId === item.id}
                           showEditButton={true}
                           showMoveToNextButton={item.status === 'research2'}
+                          showAiResearchButton={true}
                           userRole="researcher2"
                         />
                       ))}
@@ -471,8 +486,11 @@ export default function Researcher2Page() {
                             }
                           }}
                           onMoveToNext={moveToNextStatus}
+                          onAiResearch={runAiResearch}
+                          isAiResearching={aiResearchingItemId === item.id}
                           showEditButton={true}
                           showMoveToNextButton={item.status === 'research2'}
+                          showAiResearchButton={true}
                           userRole="researcher2"
                         />
                       ))}
@@ -504,8 +522,11 @@ export default function Researcher2Page() {
                             }
                           }}
                           onMoveToNext={moveToNextStatus}
+                          onAiResearch={runAiResearch}
+                          isAiResearching={aiResearchingItemId === item.id}
                           showEditButton={true}
                           showMoveToNextButton={item.status === 'research2'}
+                          showAiResearchButton={true}
                           userRole="researcher2"
                         />
                       ))}
@@ -525,7 +546,7 @@ export default function Researcher2Page() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={loadItems}
+                  onClick={() => refetch()}
                 >
                   <RefreshCw className="h-4 w-4" />
                 </Button>
@@ -785,7 +806,7 @@ export default function Researcher2Page() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => deleteItem(item.id)}
+                              onClick={() => deleteItemMutation.mutate(item.id)}
                             >
                               <Trash2 className="h-3 w-3" />
                             </Button>

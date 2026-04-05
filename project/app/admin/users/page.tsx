@@ -54,7 +54,7 @@ export default function UsersPage() {
         name: '',
         email: '',
         password: '',
-        role: 'photographer' as 'photographer',
+        role: 'photographer' as 'researcher' | 'researcher2' | 'photographer',
         isActive: true,
         updatedAt: new Date()
     });
@@ -82,11 +82,11 @@ export default function UsersPage() {
         if (!user?.id) return;
         setIsLoadingData(true);
         try {
-            // Load only photographers created by this admin
-            const response = await fetch(`/api/users/photographers?adminId=${user.id}`);
+            // Load all team members created by this admin
+            const response = await fetch(`/api/users/list?adminId=${user.id}`);
             const data = await response.json();
             if (data.success) {
-                setUsers(data.photographers);
+                setUsers(data.users || data.photographers);
                 setUserListKey(prev => prev + 1);
             }
         } catch (error) {
@@ -123,19 +123,19 @@ export default function UsersPage() {
                     name: '',
                     email: '',
                     password: '',
-                    role: 'photographer',
+                    role: 'researcher' as 'researcher' | 'researcher2' | 'photographer',
                     isActive: true,
                     updatedAt: new Date()
                 });
                 setIsAddUserModalOpen(false);
                 await refreshUserList();
             } else {
-                setError(result.error || 'Failed to create photographer');
-                toast.error(result.error || 'Failed to create photographer');
+                setError(result.error || 'Failed to create user');
+                toast.error(result.error || 'Failed to create user');
             }
         } catch (error) {
-            setError('An error occurred while creating photographer');
-            toast.error('An error occurred while creating photographer');
+            setError('An error occurred while creating user');
+            toast.error('An error occurred while creating user');
         } finally {
             setIsLoadingData(false);
         }
@@ -265,7 +265,7 @@ export default function UsersPage() {
                     </Button>
                     <Button onClick={() => setIsAddUserModalOpen(true)}>
                         <Plus className="mr-2 h-4 w-4" />
-                        Add Photographer
+                        Add User
                     </Button>
                 </div>
             </div>
@@ -343,10 +343,10 @@ export default function UsersPage() {
                                 <Users className="mx-auto h-12 w-12 text-gray-400 mb-4" />
                                 <p className="font-medium text-gray-700 mb-2">No team members yet</p>
                                 <p className="text-sm text-gray-500 mb-4 max-w-md mx-auto">
-                                    Photographers can help you capture and upload product images. Add team members to delegate photography tasks and speed up your workflow.
+                                    Add team members to help with research, photography, and final review.
                                 </p>
                                 <Button variant="link" onClick={() => setIsAddUserModalOpen(true)}>
-                                    Add your first photographer
+                                    Add your first team member
                                 </Button>
                             </div>
                         )}
@@ -360,7 +360,7 @@ export default function UsersPage() {
                     <div className="bg-white rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
                         <div className="p-6">
                             <div className="flex items-center justify-between mb-6">
-                                <h2 className="text-2xl font-semibold text-gray-900">Add New Photographer</h2>
+                                <h2 className="text-2xl font-semibold text-gray-900">Add New User</h2>
                                 <Button
                                     variant="outline"
                                     size="sm"
@@ -408,12 +408,14 @@ export default function UsersPage() {
                                     <label htmlFor="role" className="block text-sm font-medium text-gray-700">Role</label>
                                     <Select
                                         value={newUserForm.role}
-                                        onValueChange={(value) => setNewUserForm({ ...newUserForm, role: value as 'photographer' })}
+                                        onValueChange={(value) => setNewUserForm({ ...newUserForm, role: value as 'researcher' | 'researcher2' | 'photographer' })}
                                     >
                                         <SelectTrigger id="role" className="w-full">
                                             <SelectValue placeholder="Select a role" />
                                         </SelectTrigger>
                                         <SelectContent>
+                                            <SelectItem value="researcher">Researcher</SelectItem>
+                                            <SelectItem value="researcher2">Research 2</SelectItem>
                                             <SelectItem value="photographer">Photographer</SelectItem>
                                         </SelectContent>
                                     </Select>
@@ -437,7 +439,7 @@ export default function UsersPage() {
                                             Creating...
                                         </>
                                     ) : (
-                                        'Add Photographer'
+                                        'Add User'
                                     )}
                                 </Button>
                             </form>

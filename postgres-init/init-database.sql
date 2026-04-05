@@ -5,6 +5,17 @@
 -- Enable UUID extension for better ID generation
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- ── Multi-tenancy: Organizations ───────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS organizations (
+    id VARCHAR(255) PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(100) UNIQUE NOT NULL,
+    plan VARCHAR(50) NOT NULL DEFAULT 'trial',   -- trial | starter | pro | enterprise
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create the users table
 CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(255) PRIMARY KEY,
@@ -12,6 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'user',
+    org_id VARCHAR(255) REFERENCES organizations(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT TRUE,
@@ -58,8 +70,10 @@ CREATE TABLE IF NOT EXISTS auction_items (
     parent_item_id VARCHAR(255),
     sub_item_number INTEGER,
     admin_id VARCHAR(255),
+    org_id VARCHAR(255),
     FOREIGN KEY (parent_item_id) REFERENCES auction_items(id) ON DELETE CASCADE,
-    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL
+    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE SET NULL
 );
 
 -- Create workflow_steps table
@@ -216,7 +230,7 @@ VALUES (
     'admin-auctionflow-001',
     'AuctionFlow Admin',
     'admin@auctionflow.com',
-    'Admin@bids25',
+    '$2b$10$nEs6GyaIVrOCy12XD79aIeUyNR0sZm0.Dn0/9UyuSUGRTKuDs4N.u',
     'admin',
     NOW(),
     NOW(),
@@ -234,7 +248,7 @@ VALUES (
     'super-admin-001',
     'Super Administrator',
     'superadmin@auctionflow.com',
-    'SuperAdmin@2024!',
+    '$2b$10$EJrHB4.auyH7zEZHrC9KKO/qDm/rQ26DU2gs0UneunUrX7dd1GjMq',
     'super_admin',
     NOW(),
     NOW(),

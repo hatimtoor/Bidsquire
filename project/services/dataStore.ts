@@ -90,7 +90,7 @@ class DataStore {
     }
   }
 
-  private initializeAdminUser() {
+  initializeAdminUser() {
     if (!isBrowser) return;
 
     // Check if admin user already exists
@@ -514,9 +514,9 @@ class DataStore {
   }
 
   // Workflow Management
-  async moveItemToNextStatus(itemId: string, userId: string, userName: string, notes?: string): Promise<boolean> {
+  async moveItemToNextStatus(itemId: string, userId: string, userName: string, notes?: string): Promise<{ success: boolean; error?: string }> {
     const item = this.getItem(itemId);
-    if (!item) return false;
+    if (!item) return { success: false, error: 'ITEM_NOT_FOUND' };
 
     const currentStatus = item.status;
     let nextStatus: AuctionItem['status'];
@@ -538,7 +538,39 @@ class DataStore {
         nextStatus = 'finalized';
         break;
       default:
-        return false;
+        return { success: false, error: 'INVALID_TRANSITION' };
+    }
+
+    // Check credits BEFORE moving the item — block if insufficient
+    if (currentStatus === 'research2' && nextStatus === 'admin_review' && item.adminId) {
+      try {
+        const { databaseService } = await import('@/services/database');
+        const creditSettings = await databaseService.getCreditSettings();
+        const research2Cost = creditSettings.research2_stage_cost ?? creditSettings.research2_cost ?? 2;
+        const balance = await databaseService.getUserCredits(item.adminId);
+
+        if (!balance || balance.current_credits < research2Cost) {
+          console.log(`⛔ Blocked: insufficient credits (have ${balance?.current_credits ?? 0}, need ${research2Cost})`);
+          return { success: false, error: 'INSUFFICIENT_CREDITS' };
+        }
+
+        // Credits available — deduct now
+        const creditDeducted = await databaseService.deductCredits(
+          item.adminId,
+          research2Cost,
+          `Research2 completion: ${item.itemName || 'Unnamed Item'}`
+        );
+
+        if (!creditDeducted) {
+          console.log('⛔ Credit deduction failed');
+          return { success: false, error: 'INSUFFICIENT_CREDITS' };
+        }
+
+        console.log(`✅ Credits deducted: ${research2Cost} credits for research2 completion`);
+      } catch (error) {
+        console.error('Error checking/deducting credits for research2:', error);
+        return { success: false, error: 'CREDIT_CHECK_FAILED' };
+      }
     }
 
     // Auto-assign role based on the next status
@@ -555,32 +587,7 @@ class DataStore {
     }
 
     const updated = await this.updateItem(itemId, updateData);
-    if (!updated) return false;
-
-    // Deduct credits when moving from research2 to admin_review
-    if (currentStatus === 'research2' && nextStatus === 'admin_review' && item.adminId) {
-      try {
-        const { databaseService } = await import('@/services/database');
-        const creditSettings = await databaseService.getCreditSettings();
-        const research2Cost = creditSettings.research2_stage_cost ?? creditSettings.research2_cost ?? 2;
-
-        const creditDeducted = await databaseService.deductCredits(
-          item.adminId,
-          research2Cost,
-          `Research2 completion: ${item.itemName || 'Unnamed Item'}`
-        );
-
-        if (!creditDeducted) {
-          console.log('⚠️ Insufficient credits for research2 completion');
-          // Note: We don't block the workflow, just log the issue
-        } else {
-          console.log(`✅ Credits deducted: ${research2Cost} credits for research2 completion`);
-        }
-      } catch (error) {
-        console.error('Error deducting credits for research2:', error);
-        // Don't block the workflow for credit errors
-      }
-    }
+    if (!updated) return { success: false, error: 'UPDATE_FAILED' };
 
     // Get assigned role info for logging
     const assignmentNote = assignedRole ? ` (Auto-assigned to ${assignedRole} role)` : '';
@@ -607,13 +614,50 @@ class DataStore {
 
     // Send webhook when researcher moves item to winning status (non-blocking)
     if (currentStatus === 'research' && nextStatus === 'winning') {
-      // Fire and forget - don't wait for response
       this.sendResearcherProgressionWebhook(itemId).catch(error => {
         console.error('❌ Researcher progression webhook failed (non-blocking):', error);
       });
+
+      // Lead notification: item won at auction (server-side only)
+      if (item.adminId && typeof window === 'undefined') {
+        import('@/services/database').then(({ databaseService }) =>
+          databaseService.getUserById(item.adminId!).then(adminUser => {
+            if (!adminUser) return;
+            return import('@/services/lead-notifications').then(({ notifyItemsWon }) =>
+              notifyItemsWon({
+                adminName: adminUser.name,
+                adminEmail: adminUser.email,
+                itemName: item.itemName || 'Unnamed item',
+                auctionUrl: item.url || item.url_main,
+                auctionName: item.auctionName,
+              })
+            );
+          })
+        ).catch(e => console.error('[Notify] winning email failed:', e));
+      }
     }
 
-    return true;
+    // Lead notification: photos uploaded (photography → research2, server-side only)
+    if (currentStatus === 'photography' && nextStatus === 'research2') {
+      if (item.adminId && typeof window === 'undefined') {
+        import('@/services/database').then(({ databaseService }) =>
+          databaseService.getUserById(item.adminId!).then(adminUser => {
+            if (!adminUser) return;
+            return import('@/services/lead-notifications').then(({ notifyPhotosUploaded }) =>
+              notifyPhotosUploaded({
+                adminName: adminUser.name,
+                adminEmail: adminUser.email,
+                itemName: item.itemName || 'Unnamed item',
+                photoCount: item.photographerImages?.length || 0,
+                auctionUrl: item.url || item.url_main,
+              })
+            );
+          })
+        ).catch(e => console.error('[Notify] photos email failed:', e));
+      }
+    }
+
+    return { success: true };
   }
 
   // Find first researcher user for auto-assignment

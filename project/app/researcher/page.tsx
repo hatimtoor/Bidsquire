@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -14,18 +14,62 @@ import { Loader2, ExternalLink, Image, Calendar, Tag, DollarSign, RefreshCw, Plu
 import { toast } from 'sonner';
 import Navbar from '@/components/layout/navbar';
 import ItemCard from '@/components/ItemCard';
-import { dataStore } from '@/services/dataStore';
+import { dataStore } from '@/services/dataStore'; // still used for getDashboardStats
 import { AuctionItem } from '@/types/auction';
+import { useAuctionItems } from '@/hooks/queries';
+import { useUpdateItem, useDeleteItem, useMoveItem } from '@/hooks/mutations';
 
 export default function ResearcherPage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
-  const [items, setItems] = useState<AuctionItem[]>([]);
-  const [isLoadingData, setIsLoadingData] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<AuctionItem>>({});
   const [activeTab, setActiveTab] = useState('research');
+
+  const { data: allItems = [], isLoading: isLoadingData, refetch } = useAuctionItems(user?.id, user?.role);
+  const updateItem = useUpdateItem();
+  const deleteItem = useDeleteItem();
+  const moveItem = useMoveItem();
+
+  const [aiResearchingItemId, setAiResearchingItemId] = useState<string | null>(null);
+
+  const runAiResearch = async (itemId: string) => {
+    setAiResearchingItemId(itemId);
+    try {
+      const response = await fetch('/api/webhook/send-ai-research', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId }),
+      });
+      const data = await response.json();
+
+      if (response.status === 402) {
+        toast.error('Not enough credits for AI research. You need at least 1 credit.');
+        return;
+      }
+      if (!response.ok) {
+        toast.error(data.error || 'AI research failed.');
+        return;
+      }
+
+      if (data.research) {
+        // Synchronous response — fields already saved, update the edit form
+        const item = allItems.find(i => i.id === itemId);
+        if (item) {
+          startEditing({ ...item, ...data.research });
+        }
+        toast.success(`AI research complete! ${data.ebayResultsFound > 0 ? `Found ${data.ebayResultsFound} comparable eBay listings.` : 'Estimated from AI knowledge.'} 1 credit used.`);
+        refetch();
+      } else {
+        toast.success('AI research submitted. Results will appear shortly — refresh in a few seconds.');
+      }
+    } catch (error) {
+      toast.error('Failed to connect to AI research service.');
+    } finally {
+      setAiResearchingItemId(null);
+    }
+  };
 
   // Check authentication
   useEffect(() => {
@@ -36,51 +80,18 @@ export default function ResearcherPage() {
     }
   }, [user, isLoading, router]);
 
-  // Load data on component mount
-  useEffect(() => {
-    if (user && user.role === 'researcher') {
-      loadItems();
-    }
-  }, [user]);
-
-  const loadItems = async () => {
-    try {
-      const allItems = await dataStore.getItems(user?.id, user?.role);
-      // Show only items assigned to the researcher role
-      const researcherItems = allItems.filter(item =>
-        item.assignedTo === 'researcher'
-      );
-      setItems(researcherItems);
-      setIsLoadingData(false);
-    } catch (error) {
-      console.error('Error loading items:', error);
-      setIsLoadingData(false);
-    }
-  };
-
-  const handleSearch = async (term: string) => {
-    setSearchTerm(term);
-    try {
-      const allItems = await dataStore.getItems(user?.id, user?.role);
-      const researcherItems = allItems.filter(item =>
-        item.assignedTo === 'researcher'
-      );
-
-      if (term.trim()) {
-        const filtered = researcherItems.filter(item =>
-          item.itemName?.toLowerCase().includes(term.toLowerCase()) ||
-          item.description?.toLowerCase().includes(term.toLowerCase()) ||
-          item.category?.toLowerCase().includes(term.toLowerCase()) ||
-          item.auctionName?.toLowerCase().includes(term.toLowerCase())
-        );
-        setItems(filtered);
-      } else {
-        setItems(researcherItems);
-      }
-    } catch (error) {
-      console.error('Error searching items:', error);
-    }
-  };
+  // Filter to researcher items, then apply search term
+  const items = useMemo(() => {
+    const researcherItems = allItems.filter(item => item.assignedTo === 'researcher');
+    if (!searchTerm.trim()) return researcherItems;
+    const term = searchTerm.toLowerCase();
+    return researcherItems.filter(item =>
+      item.itemName?.toLowerCase().includes(term) ||
+      item.description?.toLowerCase().includes(term) ||
+      item.category?.toLowerCase().includes(term) ||
+      item.auctionName?.toLowerCase().includes(term)
+    );
+  }, [allItems, searchTerm]);
 
   const startEditing = (item: AuctionItem) => {
     setEditingItem(item.id);
@@ -98,16 +109,16 @@ export default function ResearcherPage() {
   };
 
   const saveEdit = async (itemId: string) => {
-    try {
-      const updatedItem = await dataStore.updateItem(itemId, editForm);
-      if (updatedItem) {
-        setEditingItem(null);
-        setEditForm({});
-        await loadItems();
+    updateItem.mutate(
+      { id: itemId, updates: editForm },
+      {
+        onSuccess: () => {
+          setEditingItem(null);
+          setEditForm({});
+        },
+        onError: (error) => console.error('Error saving item:', error),
       }
-    } catch (error) {
-      console.error('Error saving item:', error);
-    }
+    );
   };
 
   const cancelEdit = () => {
@@ -144,25 +155,16 @@ export default function ResearcherPage() {
     });
   };
 
-  const moveToNextStatus = async (itemId: string) => {
-    try {
-      if (await dataStore.moveItemToNextStatus(itemId, user?.id || '', user?.name || '')) {
-        await loadItems();
-      }
-    } catch (error) {
-      console.error('Error moving item to next status:', error);
-    }
+  const moveToNextStatus = (itemId: string) => {
+    moveItem.mutate(
+      { itemId, userId: user?.id || '', userName: user?.name || '' },
+      { onError: () => toast.error('Failed to move item forward.') }
+    );
   };
 
-
-  const deleteItem = async (itemId: string) => {
+  const handleDeleteItem = (itemId: string) => {
     if (window.confirm('Are you sure you want to delete this item?')) {
-      try {
-        await dataStore.deleteItem(itemId);
-        await loadItems();
-      } catch (error) {
-        console.error('Error deleting item:', error);
-      }
+      deleteItem.mutate(itemId);
     }
   };
 
@@ -288,14 +290,14 @@ export default function ResearcherPage() {
               <Input
                 placeholder="Search items..."
                 value={searchTerm}
-                onChange={(e) => handleSearch(e.target.value)}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="flex-1"
               />
               <Button
                 variant="outline"
                 onClick={() => {
                   setSearchTerm('');
-                  loadItems();
+                  refetch();
                 }}
               >
                 Clear
@@ -320,7 +322,7 @@ export default function ResearcherPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={loadItems}
+                  onClick={() => refetch()}
                 >
                   <RefreshCw className="h-4 w-4" />
                 </Button>
@@ -369,8 +371,11 @@ export default function ResearcherPage() {
                             }
                           }}
                           onMoveToNext={moveToNextStatus}
+                          onAiResearch={runAiResearch}
+                          isAiResearching={aiResearchingItemId === item.id}
                           showEditButton={true}
                           showMoveToNextButton={item.status === 'research'}
+                          showAiResearchButton={item.status === 'research'}
                           userRole="researcher"
                         />
                       ))}
@@ -403,8 +408,11 @@ export default function ResearcherPage() {
                             }
                           }}
                           onMoveToNext={moveToNextStatus}
+                          onAiResearch={runAiResearch}
+                          isAiResearching={aiResearchingItemId === item.id}
                           showEditButton={true}
                           showMoveToNextButton={item.status === 'research'}
+                          showAiResearchButton={item.status === 'research'}
                           userRole="researcher"
                         />
                       ))}
@@ -437,8 +445,11 @@ export default function ResearcherPage() {
                             }
                           }}
                           onMoveToNext={moveToNextStatus}
+                          onAiResearch={runAiResearch}
+                          isAiResearching={aiResearchingItemId === item.id}
                           showEditButton={true}
                           showMoveToNextButton={item.status === 'research'}
+                          showAiResearchButton={item.status === 'research'}
                           userRole="researcher"
                         />
                       ))}
