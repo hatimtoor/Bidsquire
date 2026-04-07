@@ -1,8 +1,9 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import formidable from 'formidable';
 import fs from 'fs';
-import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
 // Disable body parsing for file uploads
 export const config = {
@@ -10,6 +11,15 @@ export const config = {
     bodyParser: false,
   },
 };
+
+const r2Client = new S3Client({
+  region: 'auto',
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+});
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -19,48 +29,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     console.log('📸 Image upload request received');
 
-    // Create uploads directory if it doesn't exist
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-
-    // Parse the form data
+    // Parse the form data into a temp dir
     const form = formidable({
-      uploadDir: uploadsDir,
-      keepExtensions: true,
-      maxFileSize: 10 * 1024 * 1024, // 10MB limit
+      maxFileSize: 25 * 1024 * 1024, // 25MB limit
       filter: ({ mimetype }) => {
         return !!(mimetype && mimetype.startsWith('image/'));
       },
     });
 
-    const [fields, files] = await form.parse(req);
-    
-    // Get the uploaded file
+    const [, files] = await form.parse(req);
+
     const uploadedFile = Array.isArray(files.image) ? files.image[0] : files.image;
-    
+
     if (!uploadedFile) {
       return res.status(400).json({ error: 'No image file provided' });
     }
 
-    // Generate unique filename
-    const fileExtension = path.extname(uploadedFile.originalFilename || '');
-    const uniqueFilename = `${uuidv4()}${fileExtension}`;
-    const newFilePath = path.join(uploadsDir, uniqueFilename);
+    const fileExtension = path.extname(uploadedFile.originalFilename || '.jpg');
+    const uniqueFilename = `uploads/${uuidv4()}${fileExtension}`;
+    const fileBuffer = fs.readFileSync(uploadedFile.filepath);
 
-    // Move file to final location
-    fs.renameSync(uploadedFile.filepath, newFilePath);
+    await r2Client.send(new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME!,
+      Key: uniqueFilename,
+      Body: fileBuffer,
+      ContentType: uploadedFile.mimetype || 'image/jpeg',
+    }));
 
-    // Generate public URL using the API route
-    const publicUrl = `/api/uploads/${uniqueFilename}`;
-    const publicDirectUrl = `/api/public-uploads/${uniqueFilename}`;
-    
-    console.log('✅ Image uploaded successfully:', {
+    // Clean up temp file
+    fs.unlinkSync(uploadedFile.filepath);
+
+    const publicUrl = `${process.env.R2_PUBLIC_URL}/${uniqueFilename}`;
+
+    console.log('✅ Image uploaded to R2:', {
       originalName: uploadedFile.originalFilename,
-      newName: uniqueFilename,
+      key: uniqueFilename,
       size: uploadedFile.size,
-      url: publicUrl
+      url: publicUrl,
     });
 
     return res.status(200).json({
@@ -71,16 +76,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         originalName: uploadedFile.originalFilename,
         size: uploadedFile.size,
         url: publicUrl,
-        publicUrl: publicDirectUrl,
-        uploadedAt: new Date().toISOString()
-      }
+        publicUrl,
+        uploadedAt: new Date().toISOString(),
+      },
     });
 
   } catch (error) {
     console.error('❌ Error uploading image:', error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: 'Failed to upload image',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 }
