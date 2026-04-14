@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { databaseService } from '@/services/database';
 import { verifyToken } from '@/services/auth';
+import { notifyItemsWon, notifyPhotosUploaded } from '@/services/lead-notifications';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'GET') {
@@ -116,10 +117,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
          }
        }
 
+      const currentItem = updates.status ? await databaseService.getAuctionItem(id) : null;
+      const prevStatus = currentItem?.status;
+
       const updatedItem = await databaseService.updateAuctionItem(id, updates);
       console.log('📥 Database update result:', updatedItem);
 
       if (updatedItem) {
+        // Server-side notifications on status transitions
+        if (updates.status && updates.status !== prevStatus && updatedItem.adminId) {
+          const admin = await databaseService.getUserById(updatedItem.adminId);
+          if (admin) {
+            if (prevStatus === 'research' && updates.status === 'winning') {
+              notifyItemsWon({
+                adminName: admin.name,
+                adminEmail: admin.email,
+                itemName: updatedItem.itemName || 'Unnamed Item',
+                auctionUrl: updatedItem.url || updatedItem.url_main,
+                auctionName: updatedItem.auctionName,
+              }).catch((e: Error) => console.error('[Notify] notifyItemsWon failed:', e));
+            } else if (prevStatus === 'photography' && updates.status === 'research2') {
+              notifyPhotosUploaded({
+                adminName: admin.name,
+                adminEmail: admin.email,
+                itemName: updatedItem.itemName || 'Unnamed Item',
+                photoCount: updatedItem.photographerImages?.length || 0,
+                auctionUrl: updatedItem.url || updatedItem.url_main,
+              }).catch((e: Error) => console.error('[Notify] notifyPhotosUploaded failed:', e));
+            }
+          }
+        }
+
         res.status(200).json(updatedItem);
       } else {
         res.status(404).json({ error: 'Item not found' });
