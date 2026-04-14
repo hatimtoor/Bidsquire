@@ -39,10 +39,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } else if (req.method === 'POST') {
     try {
       const decoded: any = verifyToken(req);
+      const body = req.body;
       const itemData = {
-        ...req.body,
-        status: req.body.status || 'research',
-        orgId: req.body.orgId || decoded?.orgId || null,
+        ...body,
+        // Normalize snake_case (n8n) → camelCase (DB service)
+        itemName: body.itemName || body.item_name || null,
+        lotNumber: body.lotNumber || body.lot_number || null,
+        auctionName: body.auctionName || body.auction_name || null,
+        mainImageUrl: body.mainImageUrl || body.main_image_url || null,
+        auctionSiteEstimate: body.auctionSiteEstimate || body.estimate || null,
+        aiDescription: body.aiDescription || body.ai_response || null,
+        images: body.images?.length
+          ? body.images
+          : body.all_unique_image_urls
+            ? body.all_unique_image_urls.split(',').map((s: string) => s.trim())
+            : [],
+        status: body.status || 'research',
+        orgId: body.orgId || decoded?.orgId || null,
       };
 
       // Manual item creation is free. No credit deduction needed.
