@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
   optimizeFonts: false,
   // Ensure static files are served properly
   assetPrefix: process.env.NODE_ENV === 'production' ? '' : '',
