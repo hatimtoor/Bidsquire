@@ -41,6 +41,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const decoded: any = verifyToken(req);
       const itemData = {
         ...req.body,
+        status: req.body.status || 'processing',
         orgId: req.body.orgId || decoded?.orgId || null,
       };
 
