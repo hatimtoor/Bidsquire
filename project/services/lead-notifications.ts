@@ -142,3 +142,69 @@ export async function notifyPhotosUploaded(params: {
   );
   await sendEmail(subject, html);
 }
+
+// ── Event 4: Item Assigned to Photographer ────────────────────────────────────
+
+export async function notifyAssignedToPhotographer(params: {
+  adminName: string;
+  adminEmail: string;
+  itemName: string;
+  auctionUrl?: string;
+}) {
+  const { adminName, adminEmail, itemName, auctionUrl } = params;
+  const subject = `📷 Item ready for photography — ${adminName}`;
+  const html = card(
+    'Item moved to photography stage',
+    '📷',
+    row('User', `${adminName} &lt;${adminEmail}&gt;`) +
+    row('Item', itemName) +
+    (auctionUrl ? row('URL', `<a href="${auctionUrl}" style="color:#0ea5e9">${auctionUrl}</a>`) : '') +
+    row('Time', new Date().toLocaleString('en-GB', { timeZone: 'UTC' }) + ' UTC'),
+    `<p style="margin:16px 0 0;font-size:13px;color:#6b7280">Item is now queued for the photographer.</p>`
+  );
+  await sendEmail(subject, html);
+}
+
+// ── Event 5: Item in Admin Review ─────────────────────────────────────────────
+
+export async function notifyAdminReview(params: {
+  adminName: string;
+  adminEmail: string;
+  itemName: string;
+  auctionUrl?: string;
+}) {
+  const { adminName, adminEmail, itemName, auctionUrl } = params;
+  const subject = `🔎 Item ready for admin review — ${adminName}`;
+  const html = card(
+    'Item moved to admin review',
+    '🔎',
+    row('User', `${adminName} &lt;${adminEmail}&gt;`) +
+    row('Item', itemName) +
+    (auctionUrl ? row('URL', `<a href="${auctionUrl}" style="color:#0ea5e9">${auctionUrl}</a>`) : '') +
+    row('Time', new Date().toLocaleString('en-GB', { timeZone: 'UTC' }) + ' UTC'),
+    `<p style="margin:16px 0 0;font-size:13px;color:#6b7280">Research 2 is complete. Item awaits final admin sign-off.</p>`
+  );
+  await sendEmail(subject, html);
+}
+
+// ── Event 6: Item Finalized ───────────────────────────────────────────────────
+
+export async function notifyItemFinalized(params: {
+  adminName: string;
+  adminEmail: string;
+  itemName: string;
+  auctionUrl?: string;
+}) {
+  const { adminName, adminEmail, itemName, auctionUrl } = params;
+  const subject = `✅ Item finalized — ${adminName}`;
+  const html = card(
+    'Item has been finalized',
+    '✅',
+    row('User', `${adminName} &lt;${adminEmail}&gt;`) +
+    row('Item', itemName) +
+    (auctionUrl ? row('URL', `<a href="${auctionUrl}" style="color:#0ea5e9">${auctionUrl}</a>`) : '') +
+    row('Time', new Date().toLocaleString('en-GB', { timeZone: 'UTC' }) + ' UTC'),
+    `<p style="margin:16px 0 0;font-size:13px;color:#6b7280">Item is fully processed and ready for eBay listing.</p>`
+  );
+  await sendEmail(subject, html);
+}

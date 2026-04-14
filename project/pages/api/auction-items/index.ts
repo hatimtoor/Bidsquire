@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { databaseService } from '@/services/database';
 import { verifyToken } from '@/services/auth';
-import { notifyItemsWon, notifyPhotosUploaded } from '@/services/lead-notifications';
+import { notifyAuctionFetched, notifyItemsWon, notifyAssignedToPhotographer, notifyPhotosUploaded, notifyAdminReview, notifyItemFinalized } from '@/services/lead-notifications';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'GET') {
@@ -59,9 +59,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         orgId: body.orgId || decoded?.orgId || null,
       };
 
-      // Manual item creation is free. No credit deduction needed.
-
       const newItem = await databaseService.createAuctionItem(itemData);
+
+      // Notify on new item creation
+      if (newItem.adminId) {
+        const admin = await databaseService.getUserById(newItem.adminId);
+        if (admin) {
+          notifyAuctionFetched({
+            adminName: admin.name,
+            adminEmail: admin.email,
+            auctionUrl: newItem.url_main || newItem.url || '',
+            itemId: newItem.id,
+          }).catch((e: Error) => console.error('[Notify] notifyAuctionFetched failed:', e));
+        }
+      }
+
       res.status(201).json(newItem);
     } catch (error) {
       console.error('Error creating auction item:', error);
@@ -124,26 +136,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       console.log('📥 Database update result:', updatedItem);
 
       if (updatedItem) {
-        // Server-side notifications on status transitions
+        // Server-side notifications on every status transition
         if (updates.status && updates.status !== prevStatus && updatedItem.adminId) {
           const admin = await databaseService.getUserById(updatedItem.adminId);
           if (admin) {
+            const itemName = updatedItem.itemName || 'Unnamed Item';
+            const auctionUrl = updatedItem.url_main || updatedItem.url;
+            const notify = (fn: Promise<void>, label: string) =>
+              fn.catch((e: Error) => console.error(`[Notify] ${label} failed:`, e));
+
             if (prevStatus === 'research' && updates.status === 'winning') {
-              notifyItemsWon({
-                adminName: admin.name,
-                adminEmail: admin.email,
-                itemName: updatedItem.itemName || 'Unnamed Item',
-                auctionUrl: updatedItem.url || updatedItem.url_main,
-                auctionName: updatedItem.auctionName,
-              }).catch((e: Error) => console.error('[Notify] notifyItemsWon failed:', e));
+              notify(notifyItemsWon({ adminName: admin.name, adminEmail: admin.email, itemName, auctionUrl, auctionName: updatedItem.auctionName }), 'notifyItemsWon');
+            } else if (prevStatus === 'winning' && updates.status === 'photography') {
+              notify(notifyAssignedToPhotographer({ adminName: admin.name, adminEmail: admin.email, itemName, auctionUrl }), 'notifyAssignedToPhotographer');
             } else if (prevStatus === 'photography' && updates.status === 'research2') {
-              notifyPhotosUploaded({
-                adminName: admin.name,
-                adminEmail: admin.email,
-                itemName: updatedItem.itemName || 'Unnamed Item',
-                photoCount: updatedItem.photographerImages?.length || 0,
-                auctionUrl: updatedItem.url || updatedItem.url_main,
-              }).catch((e: Error) => console.error('[Notify] notifyPhotosUploaded failed:', e));
+              notify(notifyPhotosUploaded({ adminName: admin.name, adminEmail: admin.email, itemName, photoCount: updatedItem.photographerImages?.length || 0, auctionUrl }), 'notifyPhotosUploaded');
+            } else if (prevStatus === 'research2' && updates.status === 'admin_review') {
+              notify(notifyAdminReview({ adminName: admin.name, adminEmail: admin.email, itemName, auctionUrl }), 'notifyAdminReview');
+            } else if (prevStatus === 'admin_review' && updates.status === 'finalized') {
+              notify(notifyItemFinalized({ adminName: admin.name, adminEmail: admin.email, itemName, auctionUrl }), 'notifyItemFinalized');
             }
           }
         }
