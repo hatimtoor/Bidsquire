@@ -860,8 +860,8 @@ export default function Researcher2Page() {
 
       {/* eBay Listing Draft Modal */}
       {isEbayDraftModalOpen && selectedItemForDraft && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setIsEbayDraftModalOpen(false)}>
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Create eBay Listing Draft</h3>
               <Button variant="outline" size="sm" onClick={() => setIsEbayDraftModalOpen(false)}>
@@ -1006,8 +1006,8 @@ export default function Researcher2Page() {
 
       {/* Edit Item Modal */}
       {editingItem && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setEditingItem(null)}>
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Edit Research 2 Item</h3>
               <Button variant="outline" size="sm" onClick={() => setEditingItem(null)}>
