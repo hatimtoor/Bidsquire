@@ -14,7 +14,9 @@ export const validateUrl = (url: string): { isValid: boolean; error?: string } =
   }
 
   // Check if URL matches any of the allowed patterns
-  const isMatch = ALLOWED_PATTERNS.some(pattern => url.startsWith(pattern));
+  // Also accept state-based HiBid URLs like https://hibid.com/pennsylvania/lot/...
+  const isHibidLot = /^https:\/\/hibid\.com\/(?:[a-z-]+\/)?lot\//.test(url);
+  const isMatch = isHibidLot || ALLOWED_PATTERNS.some(pattern => url.startsWith(pattern));
 
   if (!isMatch) {
     return {
