@@ -1549,15 +1549,21 @@ class DatabaseService {
     }
   }
 
-  async getAuctionItemsByOrg(orgId: string): Promise<AuctionItem[]> {
+  async getAuctionItemsByOrg(orgId: string, adminId?: string): Promise<AuctionItem[]> {
     if (isBrowser) throw new Error('Database service not available on client side');
     await this.ensureInitialized();
     const client = await this.getClient();
     try {
-      const result = await client.query(
-        'SELECT * FROM auction_items WHERE org_id = $1 ORDER BY created_at DESC',
-        [orgId]
-      );
+      // Include items by org_id OR by admin_id (for items created before org was assigned)
+      const result = adminId
+        ? await client.query(
+            'SELECT * FROM auction_items WHERE org_id = $1 OR admin_id = $2 ORDER BY created_at DESC',
+            [orgId, adminId]
+          )
+        : await client.query(
+            'SELECT * FROM auction_items WHERE org_id = $1 ORDER BY created_at DESC',
+            [orgId]
+          );
       return result.rows.map(row => this.mapAuctionItemFromDb(row));
     } finally {
       client.release();

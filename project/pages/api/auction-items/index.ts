@@ -9,14 +9,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const decoded: any = verifyToken(req);
       const role = decoded?.role;
       const orgId = decoded?.orgId;
+      const tokenUserId = decoded?.id;
 
       let items;
       if (role === 'super_admin') {
         // Super admin sees everything
         items = await databaseService.getAuctionItems();
       } else if (orgId) {
-        // Everyone else is scoped to their org
-        items = await databaseService.getAuctionItemsByOrg(orgId);
+        // Scoped to org; also include legacy items created before org was assigned (by admin_id)
+        items = await databaseService.getAuctionItemsByOrg(orgId, tokenUserId);
       } else {
         // No org assigned yet — fall back to admin_id scoping for legacy accounts
         const { userId, userRole } = req.query;
