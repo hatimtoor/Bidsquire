@@ -1,0 +1,23 @@
+version: "3.8"
+services:
+  frontend:
+    build:
+      context: ./project
+      dockerfile: Dockerfile.prod
+    ports:
+      - "3002:3000"
+    env_file: .env
+    environment:
+      - POSTGRES_HOST=host.docker.internal
+      - POSTGRES_PORT=5435
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DATABASE_URL=${DATABASE_URL}
+      - NEXT_PUBLIC_APP_URL=https://app.bidsquire.com/admin
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
