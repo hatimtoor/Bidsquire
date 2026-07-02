@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { LayoutDashboard, Users, Settings, CreditCard } from 'lucide-react';
+import { LayoutDashboard, Users, Settings, CreditCard, ClipboardCheck } from 'lucide-react';
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
 
@@ -28,6 +28,13 @@ export function Sidebar({ className }: SidebarProps) {
                 icon: Users,
                 href: '/super-admin/users',
                 active: pathname?.startsWith('/super-admin/users'),
+                show: true
+            },
+            {
+                label: 'Review Queue',
+                icon: ClipboardCheck,
+                href: '/super-admin/review-queue',
+                active: pathname?.startsWith('/super-admin/review-queue'),
                 show: true
             },
             {
