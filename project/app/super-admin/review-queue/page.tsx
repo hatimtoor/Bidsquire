@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, type ReactNode } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,7 +13,22 @@ import {
   X,
   ExternalLink,
   ImageOff,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
 } from 'lucide-react';
+
+interface Comparable {
+  title?: string | null;
+  price?: number | string | null;
+  url?: string | null;
+}
+
+interface FinalData {
+  topComps?: Comparable[] | null;
+  warnings?: string[] | null;
+  confidenceScore?: number | null;
+}
 
 interface ReviewItem {
   id: string;
@@ -25,8 +40,12 @@ interface ReviewItem {
   critic_notes: string | null;
   researcher_estimate: string | null;
   ai_description: string | null;
+  description: string | null;
   main_image_url: string | null;
   url_main: string | null;
+  images: string[] | null;
+  notes: string | null;
+  final_data: FinalData | null;
   category: string | null;
   priority: string | null;
   review_status: string | null;
@@ -54,6 +73,173 @@ function VerdictBadge({ verdict }: { verdict: string | null }) {
   return <Badge className={info.className}>{`${key} — ${info.label}`}</Badge>;
 }
 
+// Confidence may be stored as a 0–1 fraction or a 0–100 percentage; normalise.
+function confidenceInfo(score: number | null | undefined) {
+  if (score === null || score === undefined || Number.isNaN(Number(score))) {
+    return null;
+  }
+  const value = Number(score);
+  const pct = value <= 1 ? value * 100 : value;
+  const rounded = Math.round(pct);
+  const color = pct >= 70 ? 'text-green-600' : pct >= 40 ? 'text-yellow-600' : 'text-red-600';
+  return { pct: rounded, color };
+}
+
+function formatPrice(price: number | string | null | undefined): string {
+  if (price === null || price === undefined || price === '') return '';
+  if (typeof price === 'number') return `$${price}`;
+  const str = String(price).trim();
+  return str.startsWith('$') ? str : `$${str}`;
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">{children}</h4>
+  );
+}
+
+function EmptyState({ children }: { children: ReactNode }) {
+  return <p className="text-sm text-gray-400 italic">{children}</p>;
+}
+
+function ItemDetail({ item }: { item: ReviewItem }) {
+  const finalData = item.final_data || {};
+  const comps = Array.isArray(finalData.topComps) ? finalData.topComps : [];
+  const warnings = Array.isArray(finalData.warnings)
+    ? finalData.warnings.filter((w) => w && w.trim())
+    : [];
+  const confidence = confidenceInfo(finalData.confidenceScore);
+  const images = Array.isArray(item.images) ? item.images.filter(Boolean) : [];
+
+  return (
+    <div className="mt-4 pt-4 border-t space-y-5">
+      {/* Confidence score */}
+      <div className="space-y-1">
+        <SectionLabel>Confidence</SectionLabel>
+        {confidence ? (
+          <p className={`text-lg font-bold ${confidence.color}`}>{confidence.pct}%</p>
+        ) : (
+          <EmptyState>No confidence score recorded</EmptyState>
+        )}
+      </div>
+
+      {/* Warnings */}
+      <div className="space-y-1">
+        <SectionLabel>Warnings</SectionLabel>
+        {warnings.length > 0 ? (
+          <div className="space-y-1">
+            {warnings.map((warning, idx) => (
+              <div
+                key={idx}
+                className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span className="whitespace-pre-line">{warning}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState>No warnings recorded</EmptyState>
+        )}
+      </div>
+
+      {/* Top comparables */}
+      <div className="space-y-1">
+        <SectionLabel>Top comparables</SectionLabel>
+        {comps.length > 0 ? (
+          <ul className="space-y-1">
+            {comps.map((comp, idx) => (
+              <li
+                key={idx}
+                className="flex items-center justify-between gap-3 rounded-md border bg-gray-50 px-3 py-2 text-sm"
+              >
+                <span className="min-w-0 flex-1 truncate text-gray-700">
+                  {comp.title || 'Untitled comparable'}
+                </span>
+                {formatPrice(comp.price) ? (
+                  <span className="shrink-0 font-semibold text-gray-900">
+                    {formatPrice(comp.price)}
+                  </span>
+                ) : null}
+                {comp.url ? (
+                  <a
+                    href={comp.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex shrink-0 items-center gap-1 text-blue-600 hover:underline"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View
+                  </a>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState>No comparables recorded</EmptyState>
+        )}
+      </div>
+
+      {/* AI description */}
+      <div className="space-y-1">
+        <SectionLabel>AI description</SectionLabel>
+        {item.ai_description ? (
+          <p className="text-sm text-gray-600 whitespace-pre-line">{item.ai_description}</p>
+        ) : (
+          <EmptyState>No AI description recorded</EmptyState>
+        )}
+      </div>
+
+      {/* Auction description */}
+      <div className="space-y-1">
+        <SectionLabel>Auction description</SectionLabel>
+        {item.description ? (
+          <p className="text-sm text-gray-600 whitespace-pre-line">{item.description}</p>
+        ) : (
+          <EmptyState>No description recorded</EmptyState>
+        )}
+      </div>
+
+      {/* Notes */}
+      <div className="space-y-1">
+        <SectionLabel>Notes</SectionLabel>
+        {item.notes ? (
+          <p className="text-sm text-gray-600 whitespace-pre-line">{item.notes}</p>
+        ) : (
+          <EmptyState>No notes recorded</EmptyState>
+        )}
+      </div>
+
+      {/* Image gallery */}
+      <div className="space-y-1">
+        <SectionLabel>Images</SectionLabel>
+        {images.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {images.map((src, idx) => (
+              <a
+                key={idx}
+                href={src}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open full size"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={src}
+                  alt={`${item.item_name || 'Item'} image ${idx + 1}`}
+                  className="h-16 w-16 rounded-md object-cover border bg-gray-50 hover:opacity-80"
+                />
+              </a>
+            ))}
+          </div>
+        ) : (
+          <EmptyState>No additional images</EmptyState>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ReviewQueuePage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
@@ -64,6 +250,19 @@ export default function ReviewQueuePage() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (itemId: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -207,6 +406,25 @@ export default function ReviewQueuePage() {
                       {item.category ? (
                         <span className="text-xs text-gray-400">{item.category}</span>
                       ) : null}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="ml-auto text-gray-500"
+                        onClick={() => toggleExpanded(item.id)}
+                        aria-expanded={expandedIds.has(item.id)}
+                      >
+                        {expandedIds.has(item.id) ? (
+                          <>
+                            Hide details
+                            <ChevronUp className="ml-1 h-4 w-4" />
+                          </>
+                        ) : (
+                          <>
+                            Details
+                            <ChevronDown className="ml-1 h-4 w-4" />
+                          </>
+                        )}
+                      </Button>
                     </div>
 
                     <div>
@@ -312,6 +530,8 @@ export default function ReviewQueuePage() {
                     )}
                   </div>
                 </div>
+
+                {expandedIds.has(item.id) ? <ItemDetail item={item} /> : null}
               </CardContent>
             </Card>
           ))}

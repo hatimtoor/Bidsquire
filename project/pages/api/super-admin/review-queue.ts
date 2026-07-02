@@ -20,8 +20,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const result = await client.query(
         `SELECT id, item_name, lot_number, auction_name, status, critic_verdict,
-                critic_notes, researcher_estimate, ai_description, main_image_url,
-                url_main, category, priority, review_status, review_stage, created_at
+                critic_notes, researcher_estimate, ai_description, description,
+                main_image_url, url_main, images, notes, final_data, category,
+                priority, review_status, review_stage, created_at
          FROM auction_items
          WHERE review_stage = $1 AND review_status = 'pending' AND status != 'processing'
          ORDER BY auction_name ASC, lot_number ASC`,
