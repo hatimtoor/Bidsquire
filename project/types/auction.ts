@@ -40,6 +40,8 @@ export interface AuctionItem {
   orgId?: string; // Organization this item belongs to
   researcher2Estimate?: string;
   researcher2Description?: string;
+  criticVerdict?: string; // AI critic verdict (A/B/C/D) from the scraper pipeline
+  criticNotes?: string; // AI critic notes explaining the verdict
 }
 
 export interface UserAccount {

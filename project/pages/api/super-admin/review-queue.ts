@@ -23,7 +23,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 critic_notes, researcher_estimate, ai_description, main_image_url,
                 url_main, category, priority, review_status, review_stage, created_at
          FROM auction_items
-         WHERE review_stage = $1 AND review_status = 'pending'
+         WHERE review_stage = $1 AND review_status = 'pending' AND status != 'processing'
          ORDER BY auction_name ASC, lot_number ASC`,
         [stage]
       );

@@ -76,6 +76,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           broad_search_images: n8nData.broad_search_images || n8nData.image_data?.broad_search_images || '',
           tumbnail_images: n8nData.tumbnail_images || n8nData.image_data?.thumbnail_urls || '',
           ai_response: n8nData.ai_response || n8nData.cleanedOutput || n8nData.rawOutput || '',
+          critic_verdict: n8nData.critic_verdict || '',
+          critic_notes: n8nData.critic_notes || '',
+          top_comps: n8nData.top_comps,
+          warnings: n8nData.warnings,
+          confidence_score: n8nData.confidence_score,
           received_at: new Date().toISOString(),
           status: 'processed'
         };
@@ -129,6 +134,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // Import database service for direct update
       const { databaseService } = await import('@/services/database');
 
+      // Build final_data JSONB payload from AI evaluation fields (only when present,
+      // so we don't clobber any existing final_data on the row with nulls).
+      const hasFinalData =
+        processedData.top_comps !== undefined ||
+        processedData.warnings !== undefined ||
+        processedData.confidence_score !== undefined;
+      const finalDataPayload = hasFinalData
+        ? {
+            topComps: processedData.top_comps,
+            warnings: processedData.warnings,
+            confidenceScore: processedData.confidence_score,
+          }
+        : undefined;
+
       let resultItem;
 
       // If itemId is provided, this is an update to an existing placeholder
@@ -153,6 +172,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               ? processedData.all_unique_image_urls.split(',').filter(Boolean)
               : [],
           aiDescription: processedData.ai_response || undefined,
+          criticVerdict: processedData.critic_verdict || undefined,
+          criticNotes: processedData.critic_notes || undefined,
+          ...(finalDataPayload ? { finalData: finalDataPayload } : {}),
           status: 'research' as const, // Move from 'processing' to 'research'
           assignedTo: 'researcher',
           adminId: adminId || undefined,
@@ -191,6 +213,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     ? processedData.all_unique_image_urls.split(',').filter(Boolean)
                     : [],
                 aiDescription: processedData.ai_response || undefined,
+                criticVerdict: processedData.critic_verdict || undefined,
+                criticNotes: processedData.critic_notes || undefined,
+                ...(finalDataPayload ? { finalData: finalDataPayload } : {}),
                 status: 'research' as const,
                 assignedTo: 'researcher',
                 adminId: adminId,
