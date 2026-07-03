@@ -1549,6 +1549,62 @@ class DatabaseService {
     }
   }
 
+  // ─── Org Settings (item exclusion filters) ───────────────────────────────
+
+  async getOrgSettings(orgId: string): Promise<{
+    include_large_items: boolean;
+    include_coins: boolean;
+    include_firearms: boolean;
+    include_vehicles: boolean;
+  } | null> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const result = await client.query(
+        `SELECT include_large_items, include_coins, include_firearms, include_vehicles
+         FROM org_settings WHERE org_id = $1`,
+        [orgId]
+      );
+      return result.rows[0] || null;
+    } finally {
+      client.release();
+    }
+  }
+
+  async upsertOrgSettings(orgId: string, settings: {
+    include_large_items: boolean;
+    include_coins: boolean;
+    include_firearms: boolean;
+    include_vehicles: boolean;
+  }): Promise<void> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      await client.query(
+        `INSERT INTO org_settings
+           (org_id, include_large_items, include_coins, include_firearms, include_vehicles, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (org_id) DO UPDATE
+           SET include_large_items = EXCLUDED.include_large_items,
+               include_coins       = EXCLUDED.include_coins,
+               include_firearms    = EXCLUDED.include_firearms,
+               include_vehicles    = EXCLUDED.include_vehicles,
+               updated_at          = NOW()`,
+        [
+          orgId,
+          settings.include_large_items,
+          settings.include_coins,
+          settings.include_firearms,
+          settings.include_vehicles,
+        ]
+      );
+    } finally {
+      client.release();
+    }
+  }
+
   async getAuctionItemsByOrg(orgId: string, adminId?: string): Promise<AuctionItem[]> {
     if (isBrowser) throw new Error('Database service not available on client side');
     await this.ensureInitialized();

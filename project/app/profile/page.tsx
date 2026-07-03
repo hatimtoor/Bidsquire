@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Loader2, User, Lock, Save, CheckCircle, ShoppingBag } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Loader2, User, Lock, Save, CheckCircle, ShoppingBag, SlidersHorizontal } from 'lucide-react';
 import Navbar from '@/components/layout/navbar';
 import { toast } from 'sonner';
 
@@ -35,6 +36,17 @@ export default function ProfilePage() {
     newPassword: '',
     confirmPassword: ''
   });
+
+  // Item exclusion filters (org-level; admin / super_admin only)
+  const isOrgAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const [filters, setFilters] = useState({
+    include_large_items: true,
+    include_coins: true,
+    include_firearms: true,
+    include_vehicles: true
+  });
+  const [isLoadingFilters, setIsLoadingFilters] = useState(false);
+  const [isSavingFilters, setIsSavingFilters] = useState(false);
 
   // Check authentication
   useEffect(() => {
@@ -79,6 +91,42 @@ export default function ProfilePage() {
       });
     }
   }, [user]);
+
+  // Load org item filters (admin / super_admin only)
+  useEffect(() => {
+    if (!user || !isOrgAdmin) return;
+    setIsLoadingFilters(true);
+    fetch('/api/org-settings', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.settings) setFilters(data.settings);
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingFilters(false));
+  }, [user, isOrgAdmin]);
+
+  const handleSaveFilters = async () => {
+    setIsSavingFilters(true);
+    try {
+      const response = await fetch('/api/org-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(filters),
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        toast.success('Item filters saved!');
+        if (data.settings) setFilters(data.settings);
+      } else {
+        toast.error(data.error || 'Failed to save item filters');
+      }
+    } catch (err) {
+      toast.error('An error occurred while saving item filters');
+    } finally {
+      setIsSavingFilters(false);
+    }
+  };
 
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -415,6 +463,119 @@ export default function ProfilePage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Item Exclusion Filters (admin / super_admin) */}
+          {isOrgAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <SlidersHorizontal className="h-5 w-5" />
+                  Item Filters
+                </CardTitle>
+                <CardDescription>
+                  Choose which categories your team fetches. Unchecked categories are
+                  auto-excluded and the fetch credit is refunded. Real estate is always excluded.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoadingFilters ? (
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span className="text-sm">Loading filters...</span>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-start gap-3">
+                      <Checkbox
+                        id="include_large_items"
+                        checked={filters.include_large_items}
+                        onCheckedChange={(v) =>
+                          setFilters({ ...filters, include_large_items: v === true })
+                        }
+                        className="mt-1"
+                      />
+                      <div className="space-y-0.5">
+                        <Label htmlFor="include_large_items" className="cursor-pointer">
+                          Include large items
+                        </Label>
+                        <p className="text-xs text-gray-500">
+                          Furniture, appliances, vehicles-adjacent bulk
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-3">
+                      <Checkbox
+                        id="include_coins"
+                        checked={filters.include_coins}
+                        onCheckedChange={(v) =>
+                          setFilters({ ...filters, include_coins: v === true })
+                        }
+                        className="mt-1"
+                      />
+                      <div className="space-y-0.5">
+                        <Label htmlFor="include_coins" className="cursor-pointer">
+                          Include coins &amp; collectibles
+                        </Label>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-3">
+                      <Checkbox
+                        id="include_firearms"
+                        checked={filters.include_firearms}
+                        onCheckedChange={(v) =>
+                          setFilters({ ...filters, include_firearms: v === true })
+                        }
+                        className="mt-1"
+                      />
+                      <div className="space-y-0.5">
+                        <Label htmlFor="include_firearms" className="cursor-pointer">
+                          Include firearms
+                        </Label>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-3">
+                      <Checkbox
+                        id="include_vehicles"
+                        checked={filters.include_vehicles}
+                        onCheckedChange={(v) =>
+                          setFilters({ ...filters, include_vehicles: v === true })
+                        }
+                        className="mt-1"
+                      />
+                      <div className="space-y-0.5">
+                        <Label htmlFor="include_vehicles" className="cursor-pointer">
+                          Include vehicles
+                        </Label>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-gray-400">Real estate is always excluded.</p>
+
+                    <Button
+                      onClick={handleSaveFilters}
+                      disabled={isSavingFilters}
+                      className="w-full"
+                    >
+                      {isSavingFilters ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving Filters...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="mr-2 h-4 w-4" />
+                          Save Filters
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Account Actions */}
           <Card>
