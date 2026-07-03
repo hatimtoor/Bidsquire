@@ -46,7 +46,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
        SET status = 'research',
            review_status = 'rejected',
            review_rejection_reason = $1,
-           ai_response = 'Skipped by category filter',
+           ai_description = 'Skipped by category filter',
            updated_at = NOW()
        WHERE id = $2`,
       [`Auto-excluded: ${reason ?? ''}`, itemId]
