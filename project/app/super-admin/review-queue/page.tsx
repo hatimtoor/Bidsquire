@@ -43,6 +43,7 @@ interface ReviewItem {
   description: string | null;
   main_image_url: string | null;
   url_main: string | null;
+  url: string | null;
   images: string[] | null;
   notes: string | null;
   final_data: FinalData | null;
@@ -449,9 +450,9 @@ export default function ReviewQueuePage() {
                           {item.researcher_estimate}
                         </span>
                       ) : null}
-                      {item.url_main ? (
+                      {item.url_main || item.url ? (
                         <a
-                          href={item.url_main}
+                          href={(item.url_main || item.url) as string}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1 text-blue-600 hover:underline"
