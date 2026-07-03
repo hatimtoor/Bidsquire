@@ -1549,6 +1549,70 @@ class DatabaseService {
     }
   }
 
+  // ─── Org Settings (category exclusion filters) ───────────────────────────
+  // Each exclude_* flag TRUE means "skip this category — do not research it".
+  // Defaults are FALSE (everything included) for new orgs.
+
+  async getOrgSettings(orgId: string): Promise<{
+    exclude_furniture: boolean;
+    exclude_appliances: boolean;
+    exclude_coins: boolean;
+    exclude_firearms: boolean;
+    exclude_vehicles: boolean;
+  } | null> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const result = await client.query(
+        `SELECT exclude_furniture, exclude_appliances, exclude_coins,
+                exclude_firearms, exclude_vehicles
+         FROM org_settings WHERE org_id = $1`,
+        [orgId]
+      );
+      return result.rows[0] || null;
+    } finally {
+      client.release();
+    }
+  }
+
+  async upsertOrgSettings(orgId: string, settings: {
+    exclude_furniture: boolean;
+    exclude_appliances: boolean;
+    exclude_coins: boolean;
+    exclude_firearms: boolean;
+    exclude_vehicles: boolean;
+  }): Promise<void> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      await client.query(
+        `INSERT INTO org_settings
+           (org_id, exclude_furniture, exclude_appliances, exclude_coins,
+            exclude_firearms, exclude_vehicles, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         ON CONFLICT (org_id) DO UPDATE
+           SET exclude_furniture  = EXCLUDED.exclude_furniture,
+               exclude_appliances = EXCLUDED.exclude_appliances,
+               exclude_coins      = EXCLUDED.exclude_coins,
+               exclude_firearms   = EXCLUDED.exclude_firearms,
+               exclude_vehicles   = EXCLUDED.exclude_vehicles,
+               updated_at         = NOW()`,
+        [
+          orgId,
+          settings.exclude_furniture,
+          settings.exclude_appliances,
+          settings.exclude_coins,
+          settings.exclude_firearms,
+          settings.exclude_vehicles,
+        ]
+      );
+    } finally {
+      client.release();
+    }
+  }
+
   async getAuctionItemsByOrg(orgId: string, adminId?: string): Promise<AuctionItem[]> {
     if (isBrowser) throw new Error('Database service not available on client side');
     await this.ensureInitialized();

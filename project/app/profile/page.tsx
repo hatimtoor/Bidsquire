@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Loader2, User, Lock, Save, CheckCircle, ShoppingBag } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Loader2, User, Lock, Save, CheckCircle, ShoppingBag, SlidersHorizontal } from 'lucide-react';
 import Navbar from '@/components/layout/navbar';
 import { toast } from 'sonner';
 
@@ -35,6 +36,18 @@ export default function ProfilePage() {
     newPassword: '',
     confirmPassword: ''
   });
+
+  // Category exclusions (org-level; admin / super_admin only). Checked = excluded.
+  const isOrgAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const [exclusions, setExclusions] = useState({
+    exclude_furniture: false,
+    exclude_appliances: false,
+    exclude_coins: false,
+    exclude_firearms: false,
+    exclude_vehicles: false
+  });
+  const [isLoadingExclusions, setIsLoadingExclusions] = useState(false);
+  const [isSavingExclusions, setIsSavingExclusions] = useState(false);
 
   // Check authentication
   useEffect(() => {
@@ -79,6 +92,42 @@ export default function ProfilePage() {
       });
     }
   }, [user]);
+
+  // Load org category exclusions (admin / super_admin only)
+  useEffect(() => {
+    if (!user || !isOrgAdmin) return;
+    setIsLoadingExclusions(true);
+    fetch('/api/org-settings', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.settings) setExclusions(data.settings);
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingExclusions(false));
+  }, [user, isOrgAdmin]);
+
+  const handleSaveExclusions = async () => {
+    setIsSavingExclusions(true);
+    try {
+      const response = await fetch('/api/org-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(exclusions),
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        toast.success('Category exclusions saved!');
+        if (data.settings) setExclusions(data.settings);
+      } else {
+        toast.error(data.error || 'Failed to save category exclusions');
+      }
+    } catch (err) {
+      toast.error('An error occurred while saving category exclusions');
+    } finally {
+      setIsSavingExclusions(false);
+    }
+  };
 
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -415,6 +464,73 @@ export default function ProfilePage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Category exclusions (admin / super_admin) */}
+          {isOrgAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <SlidersHorizontal className="h-5 w-5" />
+                  Category exclusions
+                </CardTitle>
+                <CardDescription>
+                  Checked categories are skipped — they won&apos;t be researched, and the
+                  fetch credit is refunded automatically.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoadingExclusions ? (
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span className="text-sm">Loading exclusions...</span>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {([
+                      { key: 'exclude_furniture', label: 'Exclude furniture' },
+                      { key: 'exclude_appliances', label: 'Exclude appliances' },
+                      { key: 'exclude_coins', label: 'Exclude coins & collectibles' },
+                      { key: 'exclude_firearms', label: 'Exclude firearms' },
+                      { key: 'exclude_vehicles', label: 'Exclude vehicles' },
+                    ] as const).map(({ key, label }) => (
+                      <div key={key} className="flex items-center gap-3">
+                        <Checkbox
+                          id={key}
+                          checked={exclusions[key]}
+                          onCheckedChange={(v) =>
+                            setExclusions({ ...exclusions, [key]: v === true })
+                          }
+                        />
+                        <Label htmlFor={key} className="cursor-pointer">
+                          {label}
+                        </Label>
+                      </div>
+                    ))}
+
+                    <p className="text-xs text-gray-400">Real estate is always excluded.</p>
+
+                    <Button
+                      onClick={handleSaveExclusions}
+                      disabled={isSavingExclusions}
+                      className="w-full"
+                    >
+                      {isSavingExclusions ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="mr-2 h-4 w-4" />
+                          Save Exclusions
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Account Actions */}
           <Card>
