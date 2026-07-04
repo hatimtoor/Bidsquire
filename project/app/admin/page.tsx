@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
@@ -55,6 +56,18 @@ export default function AdminPage() {
   // Image Gallery Modal State
   const [selectedItem, setSelectedItem] = useState<AuctionItem | null>(null);
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+
+  // Category exclusions (org-level; admin / super_admin only). Checked = excluded.
+  const isOrgAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const [exclusions, setExclusions] = useState({
+    exclude_furniture: false,
+    exclude_appliances: false,
+    exclude_coins: false,
+    exclude_firearms: false,
+    exclude_vehicles: false,
+  });
+  const [isSavingExclusions, setIsSavingExclusions] = useState(false);
+  const [exclusionsSaved, setExclusionsSaved] = useState(false);
 
 
 
@@ -355,6 +368,47 @@ export default function AdminPage() {
 
   const handleClearUrls = () => {
     setUrls(['']);
+  };
+
+  // Load org category exclusions (admin / super_admin only)
+  useEffect(() => {
+    if (!user || !isOrgAdmin) return;
+    fetch('/api/org-settings', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.settings) setExclusions(data.settings);
+      })
+      .catch(() => {});
+  }, [user, isOrgAdmin]);
+
+  // Auto-save on each checkbox toggle (optimistic; reverts on failure)
+  const handleToggleExclusion = async (
+    key: keyof typeof exclusions,
+    checked: boolean
+  ) => {
+    const previous = exclusions;
+    const next = { ...exclusions, [key]: checked };
+    setExclusions(next);
+    setIsSavingExclusions(true);
+    setExclusionsSaved(false);
+    try {
+      const res = await fetch('/api/org-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(next),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data?.settings) setExclusions(data.settings);
+      setExclusionsSaved(true);
+      setTimeout(() => setExclusionsSaved(false), 1500);
+    } catch (err) {
+      setExclusions(previous);
+      toast.error('Failed to save category exclusions');
+    } finally {
+      setIsSavingExclusions(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -979,6 +1033,42 @@ export default function AdminPage() {
                   </Button>
                 </div>
               </form>
+
+              {isOrgAdmin && (
+                <div className="border-t pt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+                  <span className="text-sm font-medium text-gray-600">Category exclusions:</span>
+                  {([
+                    { key: 'exclude_furniture', label: 'Exclude furniture' },
+                    { key: 'exclude_appliances', label: 'Exclude appliances' },
+                    { key: 'exclude_coins', label: 'Exclude coins & collectibles' },
+                    { key: 'exclude_firearms', label: 'Exclude firearms' },
+                    { key: 'exclude_vehicles', label: 'Exclude vehicles' },
+                  ] as const).map(({ key, label }) => (
+                    <label
+                      key={key}
+                      className="flex items-center gap-2 cursor-pointer select-none"
+                    >
+                      <Checkbox
+                        checked={exclusions[key]}
+                        onCheckedChange={(v) => handleToggleExclusion(key, v === true)}
+                      />
+                      <span className="text-sm text-gray-700">{label}</span>
+                    </label>
+                  ))}
+                  <span className="text-xs text-gray-400">Real estate is always excluded.</span>
+                  {isSavingExclusions ? (
+                    <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Saving
+                    </span>
+                  ) : exclusionsSaved ? (
+                    <span className="inline-flex items-center gap-1 text-xs text-green-600">
+                      <CheckCircle className="h-3 w-3" />
+                      Saved
+                    </span>
+                  ) : null}
+                </div>
+              )}
             </div>
 
           </CardContent>
