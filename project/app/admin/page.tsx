@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, ExternalLink, Image, Calendar, Tag, DollarSign, RefreshCw, Plus, ArrowRight, Users, FileText, Camera, Award, Trash2, X, Edit3, CheckCircle, Save, Zap, Clock, CreditCard, AlertTriangle } from 'lucide-react';
+import { Loader2, ExternalLink, Image, Calendar, Tag, DollarSign, RefreshCw, Plus, ArrowRight, Users, FileText, Camera, Award, Trash2, X, Edit3, CheckCircle, Save, Zap, Clock, CreditCard, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 // Navbar removed
 
 import { dataStore } from '@/services/dataStore';
@@ -44,6 +44,12 @@ import {
 } from "@/components/ui/alert-dialog";
 
 
+// Items auto-excluded by the category filter (status reset to 'research' with a
+// rejected review). They should not appear among normal pipeline items.
+const isAutoExcluded = (item: AuctionItem) =>
+  item.reviewStatus === 'rejected' &&
+  (item.reviewRejectionReason || '').startsWith('Auto-excluded');
+
 export default function AdminPage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
@@ -68,12 +74,18 @@ export default function AdminPage() {
   });
   const [isSavingExclusions, setIsSavingExclusions] = useState(false);
   const [exclusionsSaved, setExclusionsSaved] = useState(false);
+  const [showExcluded, setShowExcluded] = useState(false);
 
 
 
   // React Query — items and credits
   const { data: auctionItems = [], isLoading: isLoadingData, refetch: refetchItems } = useAuctionItems(user?.id, user?.role);
   const { data: creditBalance, refetch: refetchCredits } = useCreditBalance(user?.id);
+
+  // Keep auto-excluded items out of the normal pipeline/overview; surface them
+  // separately in a collapsed "Excluded by filters" section.
+  const pipelineItems = useMemo(() => auctionItems.filter((i) => !isAutoExcluded(i)), [auctionItems]);
+  const excludedItems = useMemo(() => auctionItems.filter((i) => isAutoExcluded(i)), [auctionItems]);
   const updateItem = useUpdateItem();
   const deleteItemMutation = useDeleteItem();
   const moveItemMutation = useMoveItem();
@@ -1085,7 +1097,7 @@ export default function AdminPage() {
 
           {/* Item Pipeline Tab */}
           <WorkflowTab
-            items={auctionItems}
+            items={pipelineItems}
             creditBalance={creditBalance ?? null}
             onRefresh={refetchItems}
             onChangeStatus={changeItemStatus}
@@ -1094,7 +1106,7 @@ export default function AdminPage() {
             onCreateDraft={createEbayDraft}
           />
           <FinalizedTab
-            items={auctionItems}
+            items={pipelineItems}
             creditBalance={creditBalance ?? null}
             onRefresh={refetchItems}
             onChangeStatus={changeItemStatus}
@@ -1104,10 +1116,65 @@ export default function AdminPage() {
             onEditFinalized={openEditFinalized}
           />
           <OverviewTab
-            items={auctionItems}
+            items={pipelineItems}
             onSwitchTab={setActiveTab}
           />
         </Tabs>
+
+        {/* Items removed from the pipeline by the category filters */}
+        {excludedItems.length > 0 && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setShowExcluded((v) => !v)}
+              className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700"
+              aria-expanded={showExcluded}
+            >
+              {showExcluded ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+              Excluded by filters ({excludedItems.length})
+            </button>
+
+            {showExcluded && (
+              <div className="mt-2 space-y-2">
+                {excludedItems.map((item) => (
+                  <Card key={item.id} className="bg-gray-50 border-gray-200">
+                    <CardContent className="p-3 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className="text-gray-500">
+                            Excluded
+                          </Badge>
+                          {item.lotNumber ? (
+                            <span className="text-xs text-gray-400">Lot {item.lotNumber}</span>
+                          ) : null}
+                          <span className="font-medium text-gray-700 truncate">
+                            {item.itemName || 'Unnamed item'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {item.reviewRejectionReason || 'Auto-excluded'}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => deleteAuctionItem(item.id)}
+                        className="text-gray-400 hover:text-red-600 shrink-0"
+                        title="Delete item"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Image Gallery Modal */}

@@ -1025,6 +1025,8 @@ class DatabaseService {
       subItemNumber: row.sub_item_number,
       adminId: row.admin_id,
       orgId: row.org_id || undefined,
+      reviewStatus: row.review_status || undefined,
+      reviewRejectionReason: row.review_rejection_reason || undefined,
     };
   }
 
