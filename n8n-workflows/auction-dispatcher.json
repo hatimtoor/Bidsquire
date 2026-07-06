@@ -1,0 +1,426 @@
+{
+  "name": "Auction Dispatcher",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "auction-dispatch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1248,
+        752
+      ],
+      "id": "7cd6bb5f-da60-4da5-adad-cd58b5db51af",
+      "name": "Webhook",
+      "webhookId": "4f1e07fd-642d-4399-93e9-58c3bbbe56af"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nreturn [{\n  json: {\n    auction_url: body.auction_url,\n    adminId: body.adminId || '',\n    adminEmail: body.adminEmail || '',\n    page: 1\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1024,
+        752
+      ],
+      "id": "3f3aebe7-64bd-4c7c-962a-ef5ca35e8e0e",
+      "name": "Init state"
+    },
+    {
+      "parameters": {
+        "url": "https://hibid-seven.vercel.app/api/scrape-auction",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.auction_url }}"
+            },
+            {
+              "name": "page",
+              "value": "={{ $json.page }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -800,
+        752
+      ],
+      "id": "143bc078-5ea2-41ba-9777-f9db533fe86f",
+      "name": "Scrape auction page",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"dispatch_started\", \"auction_name\": \"{{ $json.auction_name }}\", \"total_lots\": {{ $json.total_lots || 0 }} }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -576,
+        624
+      ],
+      "id": "bc31409f-61db-49aa-b5fb-4ed31438aabc",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $('Scrape auction page').first().json;\nconst init = $('Init state').first().json;\nconst lots = resp.lots || [];\n\nif (lots.length === 0) {\n  return [{ json: { _noLots: true, next_page: resp.next_page || null, ...init } }];\n}\n\nreturn lots.map(lot => ({\n  json: {\n    url_main: lot.url,\n    lot_number: lot.lot_number || '',\n    title: lot.title || '',\n    auction_name: resp.auction_name || '',\n    adminId: init.adminId,\n    adminEmail: init.adminEmail,\n    auction_url: init.auction_url,\n    next_page: resp.next_page || null,\n    page: init.page\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        624
+      ],
+      "id": "525be29c-f586-42ba-ab76-97f4dc452a86",
+      "name": "Lots to items"
+    },
+    {
+      "parameters": {
+        "batchSize": 2,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -128,
+        624
+      ],
+      "id": "5d07b89b-b5be-499c-9700-ddd764fc397e",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/webhook/send-url",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url_main\": \"{{ $json.url_main }}\",\n  \"adminId\": \"{{ $json.adminId }}\",\n  \"adminEmail\": \"{{ $json.adminEmail }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        96,
+        624
+      ],
+      "id": "78b161d5-b276-483f-9ed6-84a6c85bb384",
+      "name": "Send lot to Bidsquire"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "ac31aeed-3d06-42b2-b89d-462005b95106",
+              "leftValue": "={{ $json.code }}",
+              "rightValue": "INSUFFICIENT_CREDITS",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        320,
+        624
+      ],
+      "id": "34918840-7977-4730-98f3-c767a50f0ead",
+      "name": "Check credit failure"
+    },
+    {
+      "parameters": {
+        "errorMessage": "Credits exhausted mid-auction - dispatch halted"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        544,
+        576
+      ],
+      "id": "b2d7f8b9-1b5e-4997-ac06-ba39b7417ae0",
+      "name": "Stop - credits exhausted"
+    },
+    {
+      "parameters": {
+        "amount": 120
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        544,
+        800
+      ],
+      "id": "ee3eb2ed-97ab-426f-81d6-17b2c1c46c18",
+      "name": "Wait 60s",
+      "webhookId": "cc009ad2-0645-4163-9e70-064cf2ed3dd0"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0f688d9b-19d1-4d60-9037-67ae14ec5af4",
+              "leftValue": "={{ $('Scrape auction page').first().json.next_page }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        96,
+        320
+      ],
+      "id": "979d57e9-9581-4e85-ac86-0fc30f71616c",
+      "name": "More pages?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const init = $('Init state').first().json;\nconst resp = $('Scrape auction page').first().json;\nreturn [{ json: { ...init, page: resp.next_page } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        304
+      ],
+      "id": "81d5a56d-15cc-4fef-8413-73475643b298",
+      "name": "Next page"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        320,
+        368
+      ],
+      "id": "3eaedb89-25a6-460e-9185-b9a9ab91863e",
+      "name": "Dispatch complete"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Init state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init state": {
+      "main": [
+        [
+          {
+            "node": "Scrape auction page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape auction page": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Lots to items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lots to items": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "More pages?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send lot to Bidsquire",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send lot to Bidsquire": {
+      "main": [
+        [
+          {
+            "node": "Check credit failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check credit failure": {
+      "main": [
+        [
+          {
+            "node": "Stop - credits exhausted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 60s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 60s": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More pages?": {
+      "main": [
+        [
+          {
+            "node": "Next page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dispatch complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Next page": {
+      "main": [
+        [
+          {
+            "node": "Scrape auction page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "SAjyu31o6WGPb1VH",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "f881bfcb-277c-41b9-9182-77a8328de310",
+  "meta": {
+    "instanceId": "07dcb4eff5cec83f8adf60b88df62464865d575cce2cc1131fb9c986bf1a088a"
+  },
+  "nodeGroups": [],
+  "id": "c6lhXkrJddVOZfmp",
+  "tags": []
+}

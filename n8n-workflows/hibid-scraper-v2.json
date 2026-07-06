@@ -1,0 +1,4901 @@
+{
+  "name": "HiBid Scraper v2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "789023dc-a9bf-459c-8789-d9d0c993d1cb",
+        "options": {
+          "responseData": "Success"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -20720,
+        560
+      ],
+      "id": "08d55992-a49c-4268-993f-597141b4f146",
+      "name": "Webhook",
+      "webhookId": "789023dc-a9bf-459c-8789-d9d0c993d1cb"
+    },
+    {
+      "parameters": {
+        "url": "=https://hibid-seven.vercel.app/api/scrape?url={{ encodeURIComponent($json.body.url_main) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -20496,
+        560
+      ],
+      "id": "ce222c6f-07b3-4ab0-81a3-e9c80e5e27fd",
+      "name": "Scrape HiBid listing",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const scraped = $input.first().json;\nconst webhook = $('Webhook').first().json.body;\n\nconst title = scraped.title || scraped.item_name || '';\n\n// Strip lot number prefix from title for clean item name\nconst cleanTitle = title\n  .replace(/^lot\\s*#?\\s*:?\\s*\\d+[a-z]*\\s*-?\\s*/gi, '')   // \"Lot # : 49901d -\" fully stripped\n  .replace(/^#\\s*:?\\s*\\d+[a-z]*\\s*-?\\s*/gi, '')           // \"# : 49901d -\" variant\n  .replace(/^[a-z]\\s*-\\s*/i, '')                          // safety net: any leftover \"d -\" prefix\n  .trim();\n\n// Derive a basic description from the clean title\nconst description = cleanTitle;\n\n// Derive category from keywords in title\nconst titleLower = cleanTitle.toLowerCase();\nlet category = 'Collectibles';\nif (titleLower.match(/dollar|coin|cent|dime|quarter|silver|gold|morgan|mercury/)) category = 'Coins & Currency';\nelse if (titleLower.match(/painting|print|lithograph|watercolor|art|drawing/)) category = 'Art';\nelse if (titleLower.match(/watch|rolex|omega|breitling/)) category = 'Watches';\nelse if (titleLower.match(/ring|necklace|bracelet|earring|jewelry|diamond/)) category = 'Jewelry';\nelse if (titleLower.match(/furniture|chair|table|cabinet|dresser/)) category = 'Furniture';\nelse if (titleLower.match(/toy|doll|lego|figurine|action figure/)) category = 'Toys';\nelse if (titleLower.match(/book|magazine|poster|photograph|postcard/)) category = 'Paper & Ephemera';\nelse if (titleLower.match(/gun|rifle|pistol|firearm|ammunition/)) category = 'Firearms';\nelse if (titleLower.match(/tool|wrench|saw|drill/)) category = 'Tools';\n\nreturn [{\n  json: {\n    itemId: webhook.itemId,\n    adminId: webhook.adminId,\n    adminEmail: webhook.adminEmail,\n    url_main: webhook.url_main,\n    title: cleanTitle,\n    lot_number: scraped.lot_number || '',\n    description: description,\n    category: category,\n    estimate: '',\n    auction_name: scraped.auction_name || '',\n    images: Array.isArray(scraped.images) ? scraped.images : [],\n    main_image_url: scraped.main_image_url || (Array.isArray(scraped.images) ? scraped.images[0] : '') || ''\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -20272,
+        560
+      ],
+      "id": "b8dd5cee-a819-498d-ab41-ba4fa3ad4cd5",
+      "name": "Merge scrape + webhook data"
+    },
+    {
+      "parameters": {
+        "url": "https://app.bidsquire.com/api/item-db/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "type",
+              "value": "text"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.category || $json.title }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -18976,
+        560
+      ],
+      "id": "be17c8db-0080-4275-9cce-41c5a89bae1e",
+      "name": "Category search"
+    },
+    {
+      "parameters": {
+        "jsCode": "const merged = $('Merge forgery data').first().json;\nconst categoryResults = $input.first().json.results || [];\nconst title = merged.title || '';\nconst description = merged.description || '';\n\n// Strip lot numbers, prefixes, special characters aggressively\nconst cleaned = title\n  .replace(/lot\\s*#?\\s*:?\\s*\\d+\\w*\\s*-?\\s*/gi, '')  // strip \"Lot # : 8501 -\" style prefixes\n  .replace(/#\\s*:?\\s*\\d+\\w*\\s*-?\\s*/gi, '')           // strip \"# : 8501 -\" style\n  .replace(/^\\d+\\w*\\s*-?\\s*/g, '')                     // strip leading numbers like \"49901d\"\n  .replace(/^[\\s\\-_#:,\\.]*[a-zA-Z]?\\s*[\\-_#:,\\.]+\\s*/i, '')                     // strip leading junk chars including lone 'd'\n  .replace(/\\b(circa|approx|vintage|antique|estate|lot)\\b/gi, '')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nconst searchQuery = cleaned || description.substring(0, 80);\n\nconst notExactKeywords = ['original', 'signed', 'oil painting', 'watercolor', 'hand made', 'one of a kind', 'unique'];\nconst isExactMatchable = !notExactKeywords.some(k => (title + description).toLowerCase().includes(k));\n\nconst highFakeRiskKeywords = ['rolex', 'gucci', 'louis vuitton', 'chanel', 'cartier', 'prada', 'hermes', 'breitling', 'omega watch'];\nconst fakeRisk = highFakeRiskKeywords.some(k => (title + description).toLowerCase().includes(k)) ? 'high' : 'none';\n\nreturn [{\n  json: {\n    ...merged,\n    categoryResults,\n    searchQuery,\n    isExactMatchable,\n    fakeRisk,\n    categoryMatchCount: categoryResults.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -18752,
+        560
+      ],
+      "id": "b507c98c-a8f0-4dff-9cdd-6671945fed89",
+      "name": "Build exact match query"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-KEY",
+              "value": "=REDACTED"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ q: $json.searchQuery + \" sold price ebay\", gl: \"us\", num: 10 }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -18528,
+        560
+      ],
+      "id": "99f1c8fa-3c71-4cdc-a784-01c1f67b5108",
+      "name": "Serper search"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Build exact match query').first().json;\nconst serperData = $input.first().json;\n\nconst items = serperData.organic || [];\nconst topUrls = items.slice(0, 5).map(i => ({\n  url: i.link,\n  title: i.title,\n  snippet: i.snippet\n}));\n\nconst shopping = (serperData.shopping || []).slice(0, 3).map(i => ({\n  url: i.link || '',\n  title: i.title,\n  snippet: `Price: ${i.price || 'unknown'}`\n}));\n\n// peopleAlsoAsk often contains direct price data — very valuable\nconst paa = (serperData.peopleAlsoAsk || []).slice(0, 3).map(i => ({\n  url: i.link || '',\n  title: i.question,\n  snippet: i.snippet\n}));\n\nconst allResults = [...topUrls, ...shopping, ...paa];\n\nreturn [{\n  json: {\n    ...prev,\n    serperResults: allResults,\n    googleResultsText: allResults.map(r => `${r.title}: ${r.snippet} (${r.url})`).join('\\n')\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -18304,
+        560
+      ],
+      "id": "5d9fbf87-31d9-41f1-93df-36cc1d5c442d",
+      "name": "Parse Serper results"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-6"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are an auction research assistant. Based on the item details and search results below, determine if this is an exact matchable item.\n\nITEM TITLE: {{ $json.title }}\nDESCRIPTION: {{ $json.description }}\nCATEGORY: {{ $json.category }}\n\nGOOGLE SEARCH RESULTS FOR \"{{ $json.searchQuery }}\":\n{{ $json.googleResultsText }}\n\nReturn ONLY a valid JSON object, no markdown, no explanation:\n{\n  \"exactMatchFound\": true or false,\n  \"confidenceScore\": 0.0 to 1.0,\n  \"matchReason\": \"one sentence why this is or isn't an exact match\",\n  \"brand\": \"brand name or null\",\n  \"manufacturer\": \"manufacturer or null\",\n  \"makersMarks\": \"description of any marks/stamps/signatures or null\",\n  \"isExactMatchable\": true or false,\n  \"fakeRiskLevel\": \"none|low|medium|high\",\n  \"fakeRiskNotes\": \"reason for fake risk level or null\",\n  \"topResultUrls\": [\"url1\", \"url2\", \"url3\"]\n}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        -18080,
+        560
+      ],
+      "id": "b503fb18-8c3e-420b-b6e8-5dbc0a756c0d",
+      "name": "Exact match — Claude",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "FzD4RVhzqgsoK520",
+          "name": "Hatim Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Parse Serper results').first().json;\nlet matchData = { exactMatchFound: false, confidenceScore: 0.3, matchReason: 'parse error', fakeRiskLevel: prev.fakeRisk || 'none' };\n\ntry {\n  const raw = $input.first().json?.content?.[0]?.text || '';\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  matchData = JSON.parse(cleaned);\n} catch(e) {\n  console.error('Exact match parse error:', e.message);\n}\n\nconst matchType = matchData.exactMatchFound && matchData.confidenceScore >= 0.9\n  ? 'exact'\n  : matchData.confidenceScore >= 0.5\n    ? 'category'\n    : 'none';\n\nreturn [{\n  json: {\n    ...prev,\n    matchType,\n    confidenceScore: matchData.confidenceScore || 0.3,\n    matchNotes: matchData.matchReason || '',\n    brand: matchData.brand || null,\n    manufacturer: matchData.manufacturer || null,\n    makersMarks: matchData.makersMarks || null,\n    isExactMatchable: matchData.isExactMatchable !== false,\n    fakeRiskLevel: matchData.fakeRiskLevel || prev.fakeRisk || 'none',\n    fakeRiskNotes: matchData.fakeRiskNotes || null,\n    topResultUrls: matchData.topResultUrls || []\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -17728,
+        560
+      ],
+      "id": "7d22b52e-9d1f-4dab-a121-f379771f1e78",
+      "name": "Parse match result"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/upsert-item",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"title\": \"{{ $json.title }}\",\n  \"category\": \"{{ $json.category }}\",\n  \"description\": \"{{ $json.description }}\",\n  \"brand\": \"{{ $json.brand }}\",\n  \"makersMarks\": \"{{ $json.makersMarks }}\",\n  \"isExactMatchable\": {{ $json.isExactMatchable }},\n  \"fakeRiskLevel\": \"{{ $json.fakeRiskLevel }}\",\n  \"fakeRiskNotes\": \"{{ $json.fakeRiskNotes }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -17504,
+        560
+      ],
+      "id": "153a6620-dd7c-432e-9f06-dc63c65f2ff9",
+      "name": "Upsert item_db row"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/save-match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"create\",\n  \"bidsquireItemId\": \"{{ $('Parse match result').first().json.itemId }}\",\n  \"bidsquireAdminId\": \"{{ $('Parse match result').first().json.adminId }}\",\n  \"itemDbItemId\": \"{{ $json.item.id }}\",\n  \"matchType\": \"{{ $('Parse match result').first().json.matchType }}\",\n  \"confidenceScore\": {{ $('Parse match result').first().json.confidenceScore }},\n  \"matchMethod\": \"claude_google_search\",\n  \"matchNotes\": \"{{ $('Parse match result').first().json.matchNotes }}\",\n  \"searchQueryUsed\": \"{{ $('Parse match result').first().json.searchQuery }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -17280,
+        560
+      ],
+      "id": "fe2b3f31-2f15-412e-83f3-a28c77dde620",
+      "name": "Create match record"
+    },
+    {
+      "parameters": {
+        "jsCode": "const upserted = $('Upsert item_db row').first().json;\nconst matched = $('Create match record').first().json;\nconst prev = $('Parse match result').first().json;\n\nreturn [{\n  json: {\n    ...prev,\n    itemDbItemId: upserted.item.id,\n    matchId: matched.match.id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -17056,
+        560
+      ],
+      "id": "984bde38-eff3-41a5-979d-d43c911e394c",
+      "name": "Store item_db IDs"
+    },
+    {
+      "parameters": {
+        "jsCode": "const images = $('Store item_db IDs').first().json.images || [];\nconst itemDbItemId = $('Store item_db IDs').first().json.itemDbItemId;\n\nconst results = images.map((url, index) => {\n  // Strip thumbnail params\n  const cleanUrl = url\n    .replace(/([&?])h=\\d+&w=\\d+(&)?/gi, '$1')\n    .replace(/([&?])w=\\d+&h=\\d+(&)?/gi, '$1')\n    .replace(/[&?]$/, '');\n\n  const ext = cleanUrl.match(/\\.(jpg|jpeg|png|webp|gif)/i)?.[1] || 'jpg';\n  const r2Key = `item-db/${itemDbItemId}/${Date.now()}-${index}.${ext}`;\n  const r2Url = `https://pub-549c9cb448174f91bfe8c26a11d52e20.r2.dev/${r2Key}`;\n\n  return {\n    json: {\n      image_url: cleanUrl,\n      r2Key,\n      r2Url,\n      itemDbItemId,\n      index\n    }\n  };\n});\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16608,
+        560
+      ],
+      "id": "b921f250-ad53-4c51-98d1-27d3531bdab0",
+      "name": "Clean image URL"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.image_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -16384,
+        560
+      ],
+      "id": "42b010d4-d369-4f77-9919-76018e744754",
+      "name": "Download image"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "bidsquire",
+        "fileName": "={{ $('Clean image URL').item.json.r2Key }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        -16160,
+        560
+      ],
+      "id": "af80b70f-fe6a-4131-8c6a-ee5b84518d92",
+      "name": "Upload to R2",
+      "credentials": {
+        "s3": {
+          "id": "PRKOWqLwaGB7Tx25",
+          "name": "cloudflare r2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/save-image",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"itemDbItemId\": \"{{ $('Store item_db IDs').first().json.itemDbItemId }}\",\n  \"sourceUrl\": \"{{ $('Clean image URL').item.json.image_url }}\",\n  \"sourcePlatform\": \"hibid\",\n  \"r2Key\": \"{{ $('Clean image URL').item.json.r2Key }}\",\n  \"r2Url\": \"{{ $('Clean image URL').item.json.r2Url }}\",\n  \"isPrimary\": {{ $itemIndex === 0 }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -15936,
+        560
+      ],
+      "id": "4585817a-7238-42d2-91a8-7575e752d75a",
+      "name": "Save image to item_db"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Store item_db IDs').first().json;\nconst clientId = 'REDACTED';\nconst clientSecret = 'REDACTED';\nconst credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');\n\nreturn [{\n  json: {\n    ...prev,\n    ebayAuthHeader: `Basic ${credentials}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -15264,
+        560
+      ],
+      "id": "8e1038ef-ce57-412e-bd34-9f48dd9e1376",
+      "name": "Build eBay auth"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.ebay.com/identity/v1/oauth2/token",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.ebayAuthHeader }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            },
+            {
+              "name": "scope",
+              "value": "https://api.ebay.com/oauth/api_scope"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -15040,
+        560
+      ],
+      "id": "b9d497a0-ac45-44e2-931d-87c4809aae27",
+      "name": "Get eBay token"
+    },
+    {
+      "parameters": {
+        "url": "https://api.ebay.com/buy/browse/v1/item_summary/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $('Build exact match query').first().json.searchQuery }}"
+            },
+            {
+              "name": "filter",
+              "value": "buyingOptions:{AUCTION|FIXED_PRICE}"
+            },
+            {
+              "name": "sort",
+              "value": "price"
+            },
+            {
+              "name": "limit",
+              "value": "20"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.access_token }}"
+            },
+            {
+              "name": "X-EBAY-C-MARKETPLACE-ID",
+              "value": "EBAY_US"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -20720,
+        976
+      ],
+      "id": "8ee79ffa-9b33-405c-bc39-c796e267efd9",
+      "name": "Search eBay listings"
+    },
+    {
+      "parameters": {
+        "jsCode": "const soldData = $('Search eBay sold listings').first().json;\nconst activeData = $('Search eBay active listings').first().json;\nconst prev = $('Merge final confidence').first().json;\n\n// Process sold listings\nconst soldItems = soldData.itemSummaries || [];\nconst rawSoldPrices = soldItems\n  .map(i => parseFloat(i.price?.value || 0))\n  .filter(p => p > 0)\n  .sort((a, b) => a - b);\n\n// Process active listings\nconst activeItems = activeData.itemSummaries || [];\nconst activePrices = activeItems\n  .map(i => parseFloat(i.price?.value || 0))\n  .filter(p => p > 0)\n  .sort((a, b) => a - b);\n\n// Strip outliers from sold prices using cluster method\nlet trimmedSoldPrices = rawSoldPrices;\nlet removedPrices = [];\nlet removalReason = 'No outliers removed';\n\nif (rawSoldPrices.length > 0) {\n  const median = rawSoldPrices[Math.floor(rawSoldPrices.length / 2)];\n  const clusterThreshold = median * 0.25;\n  trimmedSoldPrices = rawSoldPrices.filter(p => p >= clusterThreshold);\n  removedPrices = rawSoldPrices.filter(p => p < clusterThreshold);\n  if (removedPrices.length > 0) {\n    removalReason = `Removed ${removedPrices.length} prices below cluster threshold of $${clusterThreshold.toFixed(2)}`;\n  }\n}\n\nconst trimmedMin = trimmedSoldPrices.length > 0 ? Math.min(...trimmedSoldPrices) : 0;\nconst trimmedMax = trimmedSoldPrices.length > 0 ? Math.max(...trimmedSoldPrices) : 0;\nconst trimmedMedian = trimmedSoldPrices.length > 0\n  ? trimmedSoldPrices[Math.floor(trimmedSoldPrices.length / 2)]\n  : 0;\n\nconst activeMin = activePrices.length > 0 ? Math.min(...activePrices) : 0;\nconst activeMax = activePrices.length > 0 ? Math.max(...activePrices) : 0;\n\n// Reference URLs from sold listings within trimmed range\nconst referenceUrls = soldItems\n  .filter(i => {\n    const p = parseFloat(i.price?.value || 0);\n    return p >= trimmedMin && p <= trimmedMax;\n  })\n  .slice(0, 6)\n  .map(i => ({\n    url: i.itemWebUrl || '',\n    platform: 'ebay',\n    title: i.title || '',\n    soldPrice: parseFloat(i.price?.value || 0),\n    condition: i.condition || ''\n  }));\n\n// Active listing URLs for context\nconst activeReferenceUrls = activeItems\n  .slice(0, 3)\n  .map(i => ({\n    url: i.itemWebUrl || '',\n    platform: 'ebay',\n    title: i.title || '',\n    listedPrice: parseFloat(i.price?.value || 0),\n    condition: i.condition || ''\n  }));\n\nreturn [{\n  json: {\n    ...prev,\n    rawPrices: rawSoldPrices,\n    trimmedPrices: trimmedSoldPrices,\n    trimmedMin,\n    trimmedMax,\n    trimmedMedian,\n    removedPrices,\n    removalReason,\n    activePrices,\n    activeMin,\n    activeMax,\n    priceRangeLabel: trimmedSoldPrices.length > 0\n      ? `$${trimmedMin.toFixed(0)} – $${trimmedMax.toFixed(0)}`\n      : 'No sold data',\n    activeRangeLabel: activePrices.length > 0\n      ? `$${activeMin.toFixed(0)} – $${activeMax.toFixed(0)}`\n      : 'No active listings',\n    referenceUrls,\n    activeReferenceUrls\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10768,
+        560
+      ],
+      "id": "f51a9188-c615-46b3-a15e-b406f7e848b7",
+      "name": "Compute price range"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/save-match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save-prices\",\n  \"itemDbItemId\": \"{{ $json.itemDbItemId }}\",\n  \"matchId\": \"{{ $json.matchId }}\",\n  \"rawSoldPrices\": {{ JSON.stringify($json.rawPrices) }},\n  \"trimmedSoldPrices\": {{ JSON.stringify($json.trimmedPrices) }},\n  \"trimmedMin\": {{ $json.trimmedMin }},\n  \"trimmedMax\": {{ $json.trimmedMax }},\n  \"trimmedMedian\": {{ $json.trimmedMedian }},\n  \"removedPrices\": {{ JSON.stringify($json.removedPrices) }},\n  \"removalReason\": \"{{ $json.removalReason }}\",\n  \"searchQueryUsed\": \"{{ $json.searchQuery }}\",\n  \"referenceUrls\": {{ JSON.stringify($json.referenceUrls) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -10544,
+        560
+      ],
+      "id": "7f1c396d-7c52-4d80-8d82-d01a81ffe484",
+      "name": "Save price history"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-opus-4-5"
+        },
+        "text": "=You are a professional auction appraiser. Analyze these item images and describe:\n1. Physical condition (excellent/good/fair/poor)\n2. Any visible damage, wear, or restoration\n3. Any visible makers marks, signatures, labels, or identifying features\n4. Material composition if identifiable\n5. Approximate age indicators\n\nItem context: {{ $(\"Compute price range\").first().json.title }}\n\nBe specific and factual. This analysis will be used for pricing.",
+        "imageUrls": "={{ $('Prepare for analysis').first().json.r2ImageUrlsJoined }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        -10320,
+        560
+      ],
+      "id": "dd538fe3-8b66-425e-b24b-80e0009ef7e9",
+      "name": "Analyze images",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "FzD4RVhzqgsoK520",
+          "name": "Hatim Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const imageAnalysis = $input.first().json?.content?.[0]?.text || 'No image analysis available';\nconst prev = $('Compute price range').first().json;\n\nreturn [{ json: { ...prev, imageAnalysis } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10096,
+        560
+      ],
+      "id": "27e09a9e-38da-40e8-99db-bc8821824521",
+      "name": "Merge image analysis"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-6"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a professional auction appraiser. Based on the data below, provide a price estimate and listing description.\n\nITEM: {{ $json.title }}\nCATEGORY: {{ $json.category }}\nAUCTION DESCRIPTION: {{ $json.description }}\nMATCH TYPE: {{ $json.matchType }} (confidence: {{ $json.confidenceScore }})\nCONFIDENCE BASIS: {{ $json.confidenceLabel }}\n{{ $json.survivingListingsCount > 0 ? $json.survivingListingsCount + ' eBay listings passed image verification' : 'No eBay listings passed image verification — relying on text/category match only' }}\n\nFAKE RISK: {{ $json.fakeRiskLevel }}{{ $json.fakeRiskNotes ? ' — ' + $json.fakeRiskNotes : '' }}\n\nFORGERY RISK: {{ $json.forgeryRiskLevel }}{{ $json.forgeryNotes ? ' — ' + $json.forgeryNotes : '' }}\n{{ $json.authenticValueNotes ? 'If authentic: ' + $json.authenticValueNotes : '' }}\n{{ $json.replicaValueNotes ? 'If replica: ' + $json.replicaValueNotes : '' }}\n\nMARKET DATA:\nSold price range (ground truth): {{ $json.priceRangeLabel }} — {{ $json.trimmedPrices.length }} sold listings\nCurrently listed on eBay: {{ $json.activeRangeLabel }} — {{ $json.activePrices.length }} active listings\nMedian sold price: ${{ $json.trimmedMedian }}\n\nIMAGE ANALYSIS:\n{{ $json.imageAnalysis }}\n\nReturn ONLY a valid JSON object, no markdown, no explanation:\n{\n  \"estimateMin\": number,\n  \"estimateMax\": number,\n  \"description\": \"2-3 sentence eBay listing description\",\n  \"fakeRisk\": \"none|low|medium|high\",\n  \"fakeNotes\": \"specific notes about authenticity concerns or null\",\n  \"confidenceLevel\": \"high|medium|low\",\n  \"confidenceReason\": \"one sentence\"\n}\n\nIMPORTANT: If matchType is 'none' or confidence below 0.5, widen the estimate range and note it is a general category estimate. If fakeRisk is high, communicate this clearly in the description and lower the estimate. If forgeryRiskLevel is high or medium, provide TWO estimates — one assuming authentic, one assuming replica — and communicate the distinction clearly in the description."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        -9872,
+        560
+      ],
+      "id": "c1cfce45-5ea0-45aa-a002-282bd3b001d4",
+      "name": "AI appraiser attempt 1",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "FzD4RVhzqgsoK520",
+          "name": "Hatim Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let appraisal = {};\ntry {\n  const raw = $input.first().json?.content?.[0]?.text || '{}';\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  appraisal = JSON.parse(cleaned);\n} catch(e) {\n  appraisal = { estimateMin: 0, estimateMax: 0, description: 'Parse error', fakeRisk: 'none', confidenceLevel: 'low', confidenceReason: 'Failed to parse AI response' };\n}\nreturn [{ json: { ...$('Merge image analysis').first().json, appraisal1: appraisal } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -9520,
+        560
+      ],
+      "id": "31c553ab-861f-4c44-b11d-f5c3cd4f5080",
+      "name": "Parse appraiser 1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/save-match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save-appraiser\",\n  \"matchId\": \"{{ $json.matchId }}\",\n  \"attempt\": 1,\n  \"estimateMin\": {{ $json.appraisal1.estimateMin || 0 }},\n  \"estimateMax\": {{ $json.appraisal1.estimateMax || 0 }},\n  \"description\": {{ JSON.stringify($json.appraisal1.description || '') }},\n  \"fakeRisk\": \"{{ $json.appraisal1.fakeRisk }}\",\n  \"fakeNotes\": {{ JSON.stringify($json.appraisal1.fakeNotes || '') }},\n  \"rawOutput\": {{ JSON.stringify($json.appraisal1) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -9296,
+        560
+      ],
+      "id": "b1adc182-75d7-4e81-9e45-d1791c8aea54",
+      "name": "Save appraiser 1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-6"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a senior auction expert acting as a critic. Evaluate this appraisal and assign a verdict.\n\nITEM: {{ $('Parse appraiser 1').first().json.title }}\nMARKET RANGE: {{ $('Parse appraiser 1').first().json.priceRangeLabel }} ({{ $('Parse appraiser 1').first().json.trimmedPrices.length }} sold listings)\nACTIVE LISTINGS: {{ $('Parse appraiser 1').first().json.activeRangeLabel }}\nMATCH CONFIDENCE: {{ $('Parse appraiser 1').first().json.confidenceScore }} ({{ $('Parse appraiser 1').first().json.matchType }} match)\nCONFIDENCE BASIS: {{ $('Parse appraiser 1').first().json.confidenceLabel }}\nFORGERY RISK: {{ $('Parse appraiser 1').first().json.forgeryRiskLevel }}\n\nAPPRAISAL TO EVALUATE:\nEstimate: ${{ $('Parse appraiser 1').first().json.appraisal1.estimateMin }} – ${{ $('Parse appraiser 1').first().json.appraisal1.estimateMax }}\nDescription: {{ $('Parse appraiser 1').first().json.appraisal1.description }}\nFake risk: {{ $('Parse appraiser 1').first().json.appraisal1.fakeRisk }}\nConfidence: {{ $('Parse appraiser 1').first().json.appraisal1.confidenceLevel }}\n\nVERDICT CRITERIA — assign exactly one:\nA = Sold comps found, same condition, same time period — gold standard. Estimate is well-grounded.\nB = Active listings only or asking prices used — unconfirmed if achievable. Estimate is reasonable but speculative.\nC = Comparables don't closely match this specific item — different year, condition, or variant used.\nD = No usable comparables, confidence below 0.4, or item cannot be reliably valued.\n\nALSO EVALUATE:\n1. Does the estimate fall within or reasonably near the market range?\n2. Is forgery risk clearly communicated in the description if present?\n3. Is the description specific and verifiable — not generic filler?\n4. If fake risk is high, is the estimate appropriately lowered?\n\nReturn ONLY a valid JSON object, no markdown:\n{\n  \"verdict\": \"A|B|C|D\",\n  \"verdictNotes\": \"one sentence explaining the verdict\",\n  \"passed\": true or false,\n  \"score\": 0.0 to 1.0,\n  \"failureReason\": \"specific reason if passed is false, null if true\",\n  \"suggestions\": \"what the appraiser should fix on retry, null if passed\"\n}\n\nROUTING RULE: verdict D always sets passed to false. Verdicts A, B, C set passed to true unless the estimate is wildly outside the market range or forgery risk is not communicated."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        -9072,
+        560
+      ],
+      "id": "38cc780b-3186-460b-8071-005e4cdbe12a",
+      "name": "Critic round 1",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "FzD4RVhzqgsoK520",
+          "name": "Hatim Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let critic = {};\ntry {\n  const raw = $input.first().json?.content?.[0]?.text || '{}';\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  critic = JSON.parse(cleaned);\n} catch(e) {\n  critic = { \n    verdict: 'D', \n    verdictNotes: 'Failed to parse critic response',\n    passed: false, \n    score: 0, \n    failureReason: 'Failed to parse critic response', \n    suggestions: 'Retry with broader search' \n  };\n}\n\nreturn [{ json: { ...$('Parse appraiser 1').first().json, critic1: critic } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8720,
+        560
+      ],
+      "id": "307ac34f-9cd0-4b7d-96d9-ef155ef94305",
+      "name": "Parse critic 1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/save-match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save-critic\",\n  \"matchId\": \"{{ $('Store item_db IDs').first().json.matchId }}\",\n  \"round\": 1,\n  \"passed\": {{ $json.critic1.passed || false }},\n  \"score\": {{ $json.critic1.score || 0 }},\n  \"failureReason\": {{ JSON.stringify($json.critic1.failureReason || '') }},\n  \"verdict\": \"{{ $json.critic1.verdict }}\",\n  \"verdictNotes\": {{ JSON.stringify($json.critic1.verdictNotes || '') }},\n  \"rawOutput\": {{ JSON.stringify($json.critic1) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8496,
+        560
+      ],
+      "id": "557929a0-bfd0-47bb-92d9-8716e93938a7",
+      "name": "Save critic 1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Parse critic 1').first().json.critic1.passed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              },
+              "id": "5a9c7f7b-42c6-41ba-b331-035dcd74a082"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -8272,
+        560
+      ],
+      "id": "e11d98ba-44a5-47ec-a2f6-34294c9cd005",
+      "name": "Critic 1 passed?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Parse critic 1').first().json;\nreturn [{\n  json: {\n    ...prev,\n    finalEstimateMin: prev.appraisal1.estimateMin,\n    finalEstimateMax: prev.appraisal1.estimateMax,\n    finalDescription: prev.appraisal1.description,\n    finalFakeRisk: prev.appraisal1.fakeRisk,\n    passedOnAttempt: 1\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6224,
+        368
+      ],
+      "id": "f9217366-80cf-454f-b490-3a24d7b0a489",
+      "name": "Use appraisal 1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-6"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a professional auction appraiser. Your previous appraisal was rejected by a critic.\n\nCRITIC FEEDBACK: {{ $('Parse critic 1').first().json.critic1.failureReason }}\nSUGGESTIONS: {{ $('Parse critic 1').first().json.critic1.suggestions }}\n\nITEM: {{ $('Parse critic 1').first().json.title }}\nCATEGORY: {{ $('Parse critic 1').first().json.category }}\nDESCRIPTION: {{ $('Parse critic 1').first().json.description }}\nSold price range (ground truth): {{ $('Parse critic 1').first().json.priceRangeLabel }} — {{ $('Parse critic 1').first().json.trimmedPrices.length }} sold listings\nCurrently listed on eBay: {{ $('Parse critic 1').first().json.activeRangeLabel }} — {{ $('Parse critic 1').first().json.activePrices.length }} active listings\nMedian sold price: ${{ $('Parse critic 1').first().json.trimmedMedian }}\nMATCH TYPE: {{ $('Parse critic 1').first().json.matchType }} (confidence: {{ $('Parse critic 1').first().json.confidenceScore }})\nCONFIDENCE BASIS: {{ $('Parse critic 1').first().json.confidenceLabel }}\nFAKE RISK: {{ $('Parse critic 1').first().json.fakeRiskLevel }}\nFORGERY RISK: {{ $('Parse critic 1').first().json.forgeryRiskLevel }}{{ $('Parse critic 1').first().json.forgeryNotes ? ' — ' + $('Parse critic 1').first().json.forgeryNotes : '' }}\n{{ $('Parse critic 1').first().json.authenticValueNotes ? 'If authentic: ' + $('Parse critic 1').first().json.authenticValueNotes : '' }}\n{{ $('Parse critic 1').first().json.replicaValueNotes ? 'If replica: ' + $('Parse critic 1').first().json.replicaValueNotes : '' }}\nIMAGE ANALYSIS: {{ $('Parse critic 1').first().json.imageAnalysis }}\nPREVIOUS ESTIMATE: ${{ $('Parse critic 1').first().json.appraisal1.estimateMin }} – ${{ $('Parse critic 1').first().json.appraisal1.estimateMax }}\n\nAddress the critic feedback directly. Return ONLY a valid JSON object, no markdown:\n{\n  \"estimateMin\": number,\n  \"estimateMax\": number,\n  \"description\": \"2-3 sentence eBay listing description\",\n  \"fakeRisk\": \"none|low|medium|high\",\n  \"fakeNotes\": \"authenticity notes or null\",\n  \"changesFromPrevious\": \"what you changed and why\"\n}\n\n\nIMPORTANT: If matchType is 'none' or confidence below 0.5, widen the estimate range and note it is a general category estimate. If fakeRisk is high, communicate this clearly in the description and lower the estimate. If forgeryRiskLevel is high or medium, provide TWO estimates — one assuming authentic, one assuming replica — and communicate the distinction clearly in the description."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        -8048,
+        656
+      ],
+      "id": "d2880848-51bb-475c-9990-ed3ef6f4b592",
+      "name": "AI appraiser attempt 2",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "FzD4RVhzqgsoK520",
+          "name": "Hatim Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let appraisal2 = {};\ntry {\n  const raw = $input.first().json?.content?.[0]?.text || '{}';\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  appraisal2 = JSON.parse(cleaned);\n} catch(e) {\n  appraisal2 = { estimateMin: 0, estimateMax: 0, description: 'Parse error on attempt 2', fakeRisk: 'none' };\n}\nreturn [{ json: { ...$('Parse critic 1').first().json, appraisal2 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7696,
+        656
+      ],
+      "id": "d83a7166-4876-4f37-8623-6bf243f3935e",
+      "name": "Parse appraiser 2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/save-match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save-appraiser\",\n  \"matchId\": \"{{ $json.matchId }}\",\n  \"attempt\": 2,\n  \"estimateMin\": {{ $json.appraisal2.estimateMin || 0 }},\n  \"estimateMax\": {{ $json.appraisal2.estimateMax || 0 }},\n  \"description\": {{ JSON.stringify($json.appraisal2.description || '') }},\n  \"fakeRisk\": \"{{ $json.appraisal2.fakeRisk }}\",\n  \"rawOutput\": {{ JSON.stringify($json.appraisal2) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -7472,
+        656
+      ],
+      "id": "3c7a8b30-922c-4b1d-9cfb-c5a09c79c202",
+      "name": "Save appraiser 2"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-6"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a senior auction expert acting as a critic. This is the FINAL evaluation — if verdict is D the item goes to human review.\n\nITEM: {{ $('Parse appraiser 2').first().json.title }}\nMARKET RANGE: {{ $('Parse appraiser 2').first().json.priceRangeLabel }}\nACTIVE LISTINGS: {{ $('Parse appraiser 2').first().json.activeRangeLabel }}\nMATCH CONFIDENCE: {{ $('Parse appraiser 2').first().json.confidenceScore }}\nCONFIDENCE BASIS: {{ $('Parse appraiser 2').first().json.confidenceLabel }}\nFORGERY RISK: {{ $('Parse appraiser 2').first().json.forgeryRiskLevel }}\nPREVIOUS FAILURE REASON: {{ $('Parse critic 1').first().json.critic1.failureReason }}\n\nREVISED APPRAISAL:\nEstimate: ${{ $('Parse appraiser 2').first().json.appraisal2.estimateMin }} – ${{ $('Parse appraiser 2').first().json.appraisal2.estimateMax }}\nDescription: {{ $('Parse appraiser 2').first().json.appraisal2.description }}\nFake risk: {{ $('Parse appraiser 2').first().json.appraisal2.fakeRisk }}\nChanges made: {{ $('Parse appraiser 2').first().json.appraisal2.changesFromPrevious }}\n\nVERDICT CRITERIA — assign exactly one:\nA = Sold comps found, same condition, same time period — gold standard.\nB = Active listings only — asking prices, unconfirmed if achievable.\nC = Comparables don't closely match this specific item.\nD = No usable comparables, confidence below 0.4, or cannot be reliably valued.\n\nBe slightly more lenient if the appraiser made genuine improvements addressing the previous failure reason.\n\nReturn ONLY a valid JSON object, no markdown:\n{\n  \"verdict\": \"A|B|C|D\",\n  \"verdictNotes\": \"one sentence explaining the verdict\",\n  \"passed\": true or false,\n  \"score\": 0.0 to 1.0,\n  \"failureReason\": \"specific reason if passed is false, null if true\"\n}\n\nROUTING RULE: verdict D always sets passed to false. Verdicts A, B, C set passed to true."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        -7248,
+        656
+      ],
+      "id": "411eaf7c-9824-4738-9fbc-37a360e3dd48",
+      "name": "Critic round 2",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "FzD4RVhzqgsoK520",
+          "name": "Hatim Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let critic2 = {};\ntry {\n  const raw = $input.first().json?.content?.[0]?.text || '{}';\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  critic2 = JSON.parse(cleaned);\n} catch(e) {\n  critic2 = { \n    verdict: 'D',\n    verdictNotes: 'Failed to parse critic 2 response',\n    passed: false, \n    score: 0, \n    failureReason: 'Failed to parse critic 2 response' \n  };\n}\n\nreturn [{ json: { ...$json, critic2 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6896,
+        656
+      ],
+      "id": "100a7acc-2493-492c-b56b-84823bc9081d",
+      "name": "Parse critic 2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/save-match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save-critic\",\n  \"matchId\": \"{{ $('Store item_db IDs').first().json.matchId }}\",\n  \"round\": 2,\n  \"passed\": {{ $('Parse critic 2').first().json.critic2.passed || false }},\n  \"score\": {{ $('Parse critic 2').first().json.critic2.score || 0 }},\n  \"failureReason\": {{ JSON.stringify($('Parse critic 2').first().json.critic2.failureReason || '') }},\n  \"verdict\": \"{{ $('Parse critic 2').first().json.critic2.verdict }}\",\n  \"verdictNotes\": {{ JSON.stringify($('Parse critic 2').first().json.critic2.verdictNotes || '') }},\n  \"rawOutput\": {{ JSON.stringify($('Parse critic 2').first().json.critic2) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -6672,
+        656
+      ],
+      "id": "3cc347c0-0e3c-46c1-b6f1-d54c83755201",
+      "name": "Save critic 2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Parse critic 2').first().json.critic2.passed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              },
+              "id": "8ca01427-25d1-4efd-853c-5efd7e55f75c"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -6448,
+        656
+      ],
+      "id": "2c4876c7-7244-45ad-9cb6-ae1943400107",
+      "name": "Critic 2 passed?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const critic2 = $('Parse critic 2').first().json;\nconst appraisal2 = $('Parse appraiser 2').first().json.appraisal2;\n\nreturn [{\n  json: {\n    ...critic2,\n    finalEstimateMin: appraisal2?.estimateMin || 0,\n    finalEstimateMax: appraisal2?.estimateMax || 0,\n    finalDescription: appraisal2?.description || '',\n    finalFakeRisk: appraisal2?.fakeRisk || 'none',\n    passedOnAttempt: 2\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6224,
+        560
+      ],
+      "id": "6f9a80d8-d317-420d-9d48-a062c5bdddee",
+      "name": "Use appraisal 2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/save-match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"finalize\",\n  \"matchId\": \"{{ $('Store item_db IDs').first().json.matchId }}\",\n  \"estimateMin\": {{ $('Build final result').first().json.finalEstimateMin }},\n  \"estimateMax\": {{ $('Build final result').first().json.finalEstimateMax }},\n  \"description\": \"{{ $('Build final result').first().json.finalDescription }}\",\n  \"fakeRisk\": \"{{ $('Build final result').first().json.finalFakeRisk }}\",\n  \"referenceUrls\": {{ JSON.stringify($('Compute price range').first().json.referenceUrls.map(r => r.url)) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5776,
+        464
+      ],
+      "id": "3f8f2bec-c79e-48f9-b625-7813545aa5f9",
+      "name": "Finalize match"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/webhook/receive",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"itemId\": \"{{ $('Build final result').first().json.itemId }}\",\n  \"adminId\": \"{{ $('Store item_db IDs').first().json.adminId }}\",\n  \"url_main\": \"{{ $('Store item_db IDs').first().json.url_main }}\",\n  \"item_name\": {{ JSON.stringify($('Store item_db IDs').first().json.title || '') }},\n  \"lot_number\": \"{{ $('Store item_db IDs').first().json.lot_number }}\",\n  \"description\": {{ JSON.stringify($('Store item_db IDs').first().json.description || '') }},\n  \"lead\": \"\",\n  \"category\": \"{{ $('Store item_db IDs').first().json.category }}\",\n  \"estimate\": \"${{ $('Build final result').first().json.finalEstimateMin }} – ${{ $('Build final result').first().json.finalEstimateMax }}\",\n  \"auction_name\": {{ JSON.stringify($('Store item_db IDs').first().json.auction_name || '') }},\n  \"all_unique_image_urls\": \"{{ $('Store item_db IDs').first().json.images.join(',') }}\",\n  \"main_image_url\": \"{{ $('Store item_db IDs').first().json.main_image_url }}\",\n  \"tumbnail_images\": \"\",\n  \"ai_response\": {{ JSON.stringify(($('Build final result').first().json.finalDescription || '') + ' | Estimate: $' + $('Build final result').first().json.finalEstimateMin + ' – $' + $('Build final result').first().json.finalEstimateMax + ' | Match: ' + $('Build final result').first().json.matchType + ' (' + $('Build final result').first().json.confidenceScore + ')') }},\n  \"critic_verdict\": \"{{ $('Build final result').first().json.criticVerdict }}\",\n  \"critic_notes\": {{ JSON.stringify($('Build final result').first().json.criticVerdictNotes || '') }},\n  \"review_stage\": \"stage1\",\n  \"review_status\": \"pending\",\n  \"top_comps\": {{ JSON.stringify($('Build final result').first().json.topComps) }},\n  \"warnings\": {{ JSON.stringify($('Build final result').first().json.warnings) }},\n  \"confidence_score\": {{ $('Build final result').first().json.confidenceScore || 0 }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5552,
+        464
+      ],
+      "id": "0dc92240-8846-4fb9-9d36-d45a33af0f2d",
+      "name": "Send result to Bidsquire"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/item-db/save-match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"human-review\",\n  \"matchId\": \"{{ $('Store item_db IDs').first().json.matchId }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -6224,
+        752
+      ],
+      "id": "e7a9f213-f705-4f31-a6c7-d563db2ce714",
+      "name": "Flag human review"
+    },
+    {
+      "parameters": {
+        "url": "https://app.bidsquire.com/api/item-db/get-images",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "itemDbItemId",
+              "value": "={{ $('Store item_db IDs').first().json.itemDbItemId }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -15712,
+        560
+      ],
+      "id": "5172a1b6-715d-4584-a431-739ff2bb6a79",
+      "name": "Get R2 image URLs"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Store item_db IDs').first().json;\nconst images = $input.first().json.images || [];\nconst r2Urls = images.map(i => i.r2_url).filter(Boolean);\n\nreturn [{\n  json: {\n    ...prev,\n    r2ImageUrls: r2Urls,\n    r2ImageUrlsJoined: r2Urls.join(',')\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -15488,
+        560
+      ],
+      "id": "14017562-77af-4a9f-82eb-5264e4c367a5",
+      "name": "Prepare for analysis"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ids = $('Store item_db IDs').first().json;\nconst prices = $('Compute price range').first().json;\n\nlet finalEstimateMin, finalEstimateMax, finalDescription, finalFakeRisk, criticVerdict, criticVerdictNotes, passedOnAttempt;\n\ntry {\n  const a1 = $('Use appraisal 1').first().json;\n  finalEstimateMin = a1.finalEstimateMin;\n  finalEstimateMax = a1.finalEstimateMax;\n  finalDescription = a1.finalDescription;\n  finalFakeRisk = a1.finalFakeRisk;\n  criticVerdict = a1.critic1?.verdict || 'B';\n  criticVerdictNotes = a1.critic1?.verdictNotes || '';\n  passedOnAttempt = 1;\n} catch(e) {\n  const a2 = $('Use appraisal 2').first().json;\n  finalEstimateMin = a2.finalEstimateMin;\n  finalEstimateMax = a2.finalEstimateMax;\n  finalDescription = a2.finalDescription;\n  finalFakeRisk = a2.finalFakeRisk;\n  criticVerdict = a2.critic2?.verdict || 'C';\n  criticVerdictNotes = a2.critic2?.verdictNotes || '';\n  passedOnAttempt = 2;\n}\n\nconst priority = finalEstimateMax > 200 ? 'high' : finalEstimateMax > 50 ? 'medium' : 'low';\n\n// Top 3 comps for the auction email — title, price, link\nconst topComps = (prices.referenceUrls || []).slice(0, 3).map(r => ({\n  title: r.title,\n  price: r.soldPrice,\n  url: r.url\n}));\n\n// Warning lines — shown under the estimate in the email\nconst warnings = [];\nif (prices.forgeryRiskLevel === 'high' || prices.forgeryRiskLevel === 'medium') {\n  warnings.push('Forgery risk (' + prices.forgeryRiskLevel + '): ' + (prices.forgeryNotes || 'known forgery history for this item type'));\n}\nif (prices.fakeRiskLevel === 'high') {\n  warnings.push('Authenticity concern: ' + (prices.fakeRiskNotes || 'high fake risk flagged during research'));\n}\nif ((prices.confidenceScore || 0) < 0.5) {\n  warnings.push('Low match confidence (' + ((prices.confidenceScore || 0) * 100).toFixed(0) + '%) — estimate is a category-level approximation, not based on verified identical items');\n}\nif (prices.imageMatchAvailable === false) {\n  warnings.push('No eBay comparables passed photo verification — prices are from similar items, not confirmed matches');\n}\n\nconst refUrls = (prices.referenceUrls || []).map(r => r.url);\n\nreturn [{\n  json: {\n    itemId: ids.itemId,\n    finalEstimateMin,\n    finalEstimateMax,\n    finalDescription,\n    finalFakeRisk,\n    criticVerdict,\n    criticVerdictNotes,\n    passedOnAttempt,\n    priority,\n    topComps,\n    warnings,\n    referenceUrls: refUrls,\n    matchType: prices.matchType,\n    confidenceScore: prices.confidenceScore,\n    confidenceLabel: prices.confidenceLabel || ''\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6000,
+        464
+      ],
+      "id": "aaad6551-79d2-4314-a3bf-92c4b0e1d719",
+      "name": "Build final result"
+    },
+    {
+      "parameters": {
+        "content": "Receives the incoming request from Bidsquire when an admin submits a HiBid URL. Payload contains url_main, itemId, adminId, and adminEmail.\n",
+        "height": 400,
+        "width": 208
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -20768,
+        320
+      ],
+      "typeVersion": 1,
+      "id": "65e03151-c6ba-40e5-aab7-a722077bc55d",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "Calls the HiBid scraper service to extract the listing data. Returns title, lot number, images array, and URL",
+        "height": 416,
+        "width": 176
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -20528,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "3b225d9f-ecc1-4f2f-8104-a975b6c4c058",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "Combines the scraper output with the webhook payload into one clean object. Also derives a category from title keywords and strips lot number prefixes from the title.",
+        "height": 416,
+        "width": 176
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -20304,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "b6241879-0b3f-4b08-9d7d-101a0ffff75a",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "Searches the item_db library for existing items that match this category or title. Used to check if we've seen something similar before.",
+        "height": 416,
+        "width": 176
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -19008,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "9a6fa60a-5a2c-4a6a-a07a-09593448ead9",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "Cleans the title further for searching — strips noise words, lot prefixes, and special characters. Also runs a heuristic check for fake risk keywords and non-exact-matchable item types.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -18800,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "041e01e9-68bf-43fe-a19b-25690aecdc34",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "content": "Sends the cleaned search query to Serper (Google Search API) to find real-world listings, sold prices, and product references for this item.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -18576,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "ddf01d86-46d5-4555-a862-cea835b1e064",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "content": "Extracts the organic results and peopleAlsoAsk sections from the Serper response and formats them into clean text for Claude to read.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -18352,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "058b0fd5-7f11-454b-8460-ab07218a9752",
+      "name": "Sticky Note7"
+    },
+    {
+      "parameters": {
+        "content": "Claude reads the search results and decides: is this an exact matchable item, what is the confidence score, is there a fake risk, and what brand or maker's marks are present.",
+        "height": 416,
+        "width": 272
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -18096,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "2ebfed68-4f27-4f18-b12e-a0a06e3d5796",
+      "name": "Sticky Note8"
+    },
+    {
+      "parameters": {
+        "content": "Parses Claude's JSON response and determines the match type — exact (≥0.9 confidence), category (≥0.5), or none. Carries all match data forward.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -17776,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "2eeb4c94-079f-40f0-9a74-731e942fea45",
+      "name": "Sticky Note9"
+    },
+    {
+      "parameters": {
+        "content": "Creates a new row in the item_db library for this item type, or increments times_seen if a similar item already exists. This is how the library grows organically.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -17552,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "265aafaf-4337-44be-a344-75b780e0d2db",
+      "name": "Sticky Note10"
+    },
+    {
+      "parameters": {
+        "content": "Creates a match record linking this specific Bidsquire auction item to its item_db row. All appraiser and critic results will be written to this record.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -17328,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "95be5107-b0cf-42bc-85d4-662569b8313b",
+      "name": "Sticky Note11"
+    },
+    {
+      "parameters": {
+        "content": "Captures the item_db item ID and match ID from the previous two nodes and carries them forward so all downstream nodes can reference them.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -17104,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "8c96e265-4328-4160-ac17-17d801d2d548",
+      "name": "Sticky Note12"
+    },
+    {
+      "parameters": {
+        "content": "Strips thumbnail size parameters from HiBid image URLs to get full resolution versions. Generates the R2 key and public URL for each image before upload.\n",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -16656,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "4cc6b30d-7255-4386-9fb7-3de3b17dfd85",
+      "name": "Sticky Note13"
+    },
+    {
+      "parameters": {
+        "content": "Downloads each image binary from the HiBid CDN so it can be re-uploaded to our own storage.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -16432,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "13407e25-cf92-439f-8866-40b11f9dffcd",
+      "name": "Sticky Note14"
+    },
+    {
+      "parameters": {
+        "content": "Uploads the downloaded image to Cloudflare R2 under the item-db/ prefix. Images are stored here permanently for matching and analysis.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -16208,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "e158e38d-36dc-4043-8074-423379f20221",
+      "name": "Sticky Note15"
+    },
+    {
+      "parameters": {
+        "content": "Records the R2 URL and source URL in the item_db_images table so we know exactly where each image lives and where it came from.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -15984,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "35943a5c-59c7-4622-a920-b3cc234c43df",
+      "name": "Sticky Note16"
+    },
+    {
+      "parameters": {
+        "content": "Fetches the stored R2 URLs for this item from the database so Claude can analyze them. Uses R2 URLs instead of HiBid CDN URLs because HiBid blocks external access",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -15760,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "b0074a81-53ca-48d4-b46c-1fb62b646dc2",
+      "name": "Sticky Note17"
+    },
+    {
+      "parameters": {
+        "content": "Formats the R2 image URLs into a comma-separated string ready to pass into Claude's image analysis node.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -15536,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "1269aa60-2bf6-4dfb-967f-d0c76e8c1190",
+      "name": "Sticky Note18"
+    },
+    {
+      "parameters": {
+        "content": "Constructs the Basic Auth header using the eBay API credentials for the OAuth token request.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -15312,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "f991418d-c3f7-46b1-b87a-9e31efbc4505",
+      "name": "Sticky Note19"
+    },
+    {
+      "parameters": {
+        "content": "Exchanges the eBay credentials for a short-lived OAuth access token using the client_credentials grant. Required for all eBay API calls.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -15088,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "38670081-341a-4513-aad3-198cf76ec6ed",
+      "name": "Sticky Note20"
+    },
+    {
+      "parameters": {
+        "content": "Searches eBay's Browse API for active and recently sold listings matching this item. Returns up to 20 results with prices and conditions.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -14864,
+        208
+      ],
+      "typeVersion": 1,
+      "id": "5adeac21-2e8f-4b0b-b201-0ae97b1a312f",
+      "name": "Sticky Note21"
+    },
+    {
+      "parameters": {
+        "content": "Strips outlier prices that fall outside the main cluster (the \"seller didn't know what they had\" problem). Computes trimmed min, max, and median. Selects the 6 best reference URLs.",
+        "height": 416,
+        "width": 292
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -14464,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "dc345015-801f-4012-a539-9c19edfd0381",
+      "name": "Sticky Note22"
+    },
+    {
+      "parameters": {
+        "content": "Writes the raw prices, trimmed prices, removed outliers, and reference URLs to the item_db price history table. Full audit trail for every market data pull.",
+        "height": 416,
+        "width": 1220
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -7984,
+        -384
+      ],
+      "typeVersion": 1,
+      "id": "92bc3005-a7de-4c2d-8edc-3b3de4e2e945",
+      "name": "Sticky Note23"
+    },
+    {
+      "parameters": {
+        "content": "Claude vision analyzes up to 4 images of the item. Describes condition, visible damage, makers marks, material, and age indicators. This feeds directly into the appraisal prompt.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -10368,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "f731de14-7440-45da-b2c9-1fd68063b43a",
+      "name": "Sticky Note24"
+    },
+    {
+      "parameters": {
+        "content": "Combines Claude's image analysis text with the price range data so the appraiser has everything it needs in one object.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -10144,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "892a72fb-dbe7-48f2-ad55-e3b732ab0f79",
+      "name": "Sticky Note25"
+    },
+    {
+      "parameters": {
+        "content": "Claude acts as a professional auction appraiser. Using the item details, market range, and image analysis it produces a price estimate, eBay listing description, and fake risk assessment.",
+        "height": 416,
+        "width": 304
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -9904,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "87642c4b-61e8-4a72-b4ea-c6f40a7fcf00",
+      "name": "Sticky Note26"
+    },
+    {
+      "parameters": {
+        "content": "Parses Claude's JSON response from attempt 1. Falls back to safe defaults if the response can't be parsed.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -9568,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "1c7753ae-b8ac-4b88-a4d0-cb78a2035cef",
+      "name": "Sticky Note27"
+    },
+    {
+      "parameters": {
+        "content": "Writes the attempt 1 appraisal result to the item_db match record for audit and comparison purposes.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -9344,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "bfc74911-4143-43f8-945a-56cb2c74db2b",
+      "name": "Sticky Note28"
+    },
+    {
+      "parameters": {
+        "content": "A separate Claude instance acts as a senior auction expert and evaluates the appraisal. Checks if the estimate is within the market range, if the description is specific, and if fake risk is communicated properly.",
+        "height": 416,
+        "width": 304
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -9104,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "a2bef99a-b061-44e3-aa47-a6959dbfdd2e",
+      "name": "Sticky Note29"
+    },
+    {
+      "parameters": {
+        "content": "Parses the critic's JSON response. Extracts passed/failed, score, failure reason, and suggestions for the retry.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -8768,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "b861ce6d-463f-412d-9403-e8dc2eda6987",
+      "name": "Sticky Note30"
+    },
+    {
+      "parameters": {
+        "content": "Writes the critic round 1 result to the item_db match record including the failure reason that will be injected into attempt 2.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -8544,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "1612e284-8047-434e-b2bf-a7f280af41c9",
+      "name": "Sticky Note31"
+    },
+    {
+      "parameters": {
+        "content": "Routes the workflow — if the critic passed, goes straight to finalization. If failed, sends to appraiser attempt 2 with the critic's feedback.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -8320,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "206345ca-40ac-4216-bbd7-66537dde700a",
+      "name": "Sticky Note32"
+    },
+    {
+      "parameters": {
+        "content": "Packages the attempt 1 appraisal as the final result when critic round 1 passes.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -15600,
+        736
+      ],
+      "typeVersion": 1,
+      "id": "e39a1ddf-1743-4e5a-a1a1-5d1736e8adb7",
+      "name": "Sticky Note33"
+    },
+    {
+      "parameters": {
+        "content": "Claude tries again with the critic's specific failure reason injected into the prompt. Knows exactly what was wrong and what to fix.",
+        "height": 416,
+        "width": 256
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -10528,
+        1952
+      ],
+      "typeVersion": 1,
+      "id": "dc6ee54f-e3c0-4ccc-a4bf-90a4e63e3bf8",
+      "name": "Sticky Note34"
+    },
+    {
+      "parameters": {
+        "content": "Parses Claude's JSON response from attempt 2.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -10208,
+        1952
+      ],
+      "typeVersion": 1,
+      "id": "547e43d0-438f-4c45-adac-3c9f36018f72",
+      "name": "Sticky Note35"
+    },
+    {
+      "parameters": {
+        "content": "Writes the attempt 2 appraisal result to the item_db match record.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -9968,
+        1952
+      ],
+      "typeVersion": 1,
+      "id": "13f9192c-ad12-47e5-a502-b853c03550b1",
+      "name": "Sticky Note36"
+    },
+    {
+      "parameters": {
+        "content": "Final evaluation. Same criteria as round 1 but slightly more lenient if genuine improvements were made. If this fails, the item goes to human review.",
+        "height": 416,
+        "width": 256
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -9712,
+        1952
+      ],
+      "typeVersion": 1,
+      "id": "9a0c0c67-6eab-460a-965a-fbf7cf072dd9",
+      "name": "Sticky Note37"
+    },
+    {
+      "parameters": {
+        "content": "Parses the critic round 2 response.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -9392,
+        1952
+      ],
+      "typeVersion": 1,
+      "id": "73927570-0018-4a8a-b6bb-9cbff15f9e36",
+      "name": "Sticky Note38"
+    },
+    {
+      "parameters": {
+        "content": "Writes the critic round 2 result to the item_db match record.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -9152,
+        1952
+      ],
+      "typeVersion": 1,
+      "id": "a7a471f4-3f40-4352-8be3-458ead2a6f52",
+      "name": "Sticky Note39"
+    },
+    {
+      "parameters": {
+        "content": "Final routing decision — passes to finalization or flags for human review.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -8928,
+        1952
+      ],
+      "typeVersion": 1,
+      "id": "bcafe041-04da-49ae-ad98-0b33b4379ec1",
+      "name": "Sticky Note40"
+    },
+    {
+      "parameters": {
+        "content": "Packages the attempt 2 appraisal as the final result when critic round 2 passes.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -6272,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "725b8401-7269-4d05-8175-783ab0d4d4d6",
+      "name": "Sticky Note41"
+    },
+    {
+      "parameters": {
+        "content": "Consolidates the winning appraisal (attempt 1 or 2), priority level, and reference URLs into one clean object for the final callback.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -15376,
+        832
+      ],
+      "typeVersion": 1,
+      "id": "6a4c7527-dd2c-4c5f-8512-76f7177e220c",
+      "name": "Sticky Note42"
+    },
+    {
+      "parameters": {
+        "content": "Writes the final approved estimate, description, and reference URLs to the item_db match record. Status set to critic_passed.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -15152,
+        832
+      ],
+      "typeVersion": 1,
+      "id": "09e41fac-a7e7-4b80-b85e-3ee532954b33",
+      "name": "Sticky Note43"
+    },
+    {
+      "parameters": {
+        "content": "Posts the complete result back to Bidsquire — item data, AI estimate, description, and match confidence. Updates the placeholder item to research status so it appears in the researcher dashboard.",
+        "height": 416,
+        "width": 288
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -14976,
+        832
+      ],
+      "typeVersion": 1,
+      "id": "9af7d8d0-8d1f-4729-b756-5445ac078a55",
+      "name": "Sticky Note44"
+    },
+    {
+      "parameters": {
+        "content": "Only fires if both critic rounds fail. Sets the item_db match status to human_review so the team can manually review and tune the critic thresholds during testing.",
+        "height": 416,
+        "width": 192
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -10704,
+        2048
+      ],
+      "typeVersion": 1,
+      "id": "760c70dd-e0b5-402e-8352-874f1069a456",
+      "name": "Sticky Note45"
+    },
+    {
+      "parameters": {
+        "url": " https://api.ebay.com/buy/browse/v1/item_summary/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $('Build eBay auth').first().json.searchQuery }}"
+            },
+            {
+              "name": "sort",
+              "value": "-price"
+            },
+            {
+              "name": "limit",
+              "value": "20"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get eBay token').first().json.access_token }}"
+            },
+            {
+              "name": "X-EBAY-C-MARKETPLACE-ID",
+              "value": "EBAY_US"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -14816,
+        464
+      ],
+      "id": "0c7480d0-dd14-4905-a631-8f03ca540b41",
+      "name": "Search eBay sold listings"
+    },
+    {
+      "parameters": {
+        "url": "https://api.ebay.com/buy/browse/v1/item_summary/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $('Build eBay auth').first().json.searchQuery }}"
+            },
+            {
+              "name": "filter",
+              "value": "buyingOptions:{FIXED_PRICE|BEST_OFFER}"
+            },
+            {
+              "name": "sort",
+              "value": "price"
+            },
+            {
+              "name": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get eBay token').first().json.access_token }}"
+            },
+            {
+              "name": "X-EBAY-C-MARKETPLACE-ID",
+              "value": "EBAY_US"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -14816,
+        656
+      ],
+      "id": "e82225cc-735e-44d8-8394-48518afd02eb",
+      "name": "Search eBay active listings"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -14592,
+        560
+      ],
+      "id": "3dc26d80-f193-46e9-9d59-83bf2b9937a2",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "url": "https://app.bidsquire.com/api/item-db/check-forgery",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "category",
+              "value": "={{ $json.category }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -19424,
+        560
+      ],
+      "id": "9a083c39-6dba-44f8-b567-fb07f3fea1f9",
+      "name": "Check forgery risk"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Merge scrape + webhook data').first().json;\nconst forgery = $input.first().json.forgery || {};\n\nreturn [{\n  json: {\n    ...prev,\n    forgeryRiskLevel: forgery.forgery_risk_level || 'none',\n    forgeryNotes: forgery.notes || null,\n    authenticValueNotes: forgery.authentic_value_notes || null,\n    replicaValueNotes: forgery.replica_value_notes || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -19200,
+        560
+      ],
+      "id": "ddeb6b62-d80f-4fe0-908d-b0e73255e184",
+      "name": "Merge forgery data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.bidsquire.com/api/webhook/receive",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"itemId\": \"{{ $('Store item_db IDs').first().json.itemId }}\",\n  \"adminId\": \"{{ $('Store item_db IDs').first().json.adminId }}\",\n  \"url_main\": \"{{ $('Store item_db IDs').first().json.url_main }}\",\n  \"item_name\": {{ JSON.stringify($('Store item_db IDs').first().json.title || '') }},\n  \"lot_number\": \"{{ $('Store item_db IDs').first().json.lot_number }}\",\n  \"description\": {{ JSON.stringify($('Store item_db IDs').first().json.description || '') }},\n  \"lead\": \"\",\n  \"category\": \"{{ $('Store item_db IDs').first().json.category }}\",\n  \"estimate\": \"${{ $('Parse appraiser 2').first().json.appraisal2.estimateMin || 0 }} – ${{ $('Parse appraiser 2').first().json.appraisal2.estimateMax || 0 }}\",\n  \"auction_name\": {{ JSON.stringify($('Store item_db IDs').first().json.auction_name || '') }},\n  \"all_unique_image_urls\": \"{{ $('Store item_db IDs').first().json.images.join(',') }}\",\n  \"main_image_url\": \"{{ $('Store item_db IDs').first().json.main_image_url }}\",\n  \"tumbnail_images\": \"\",\n  \"ai_response\": {{ JSON.stringify(($('Parse appraiser 2').first().json.appraisal2.description || '') + ' | FAILED CRITIC REVIEW: ' + ($('Parse critic 2').first().json.critic2.failureReason || '')) }},\n  \"critic_verdict\": \"D\",\n  \"critic_notes\": {{ JSON.stringify($('Parse critic 2').first().json.critic2.failureReason || '') }},\n  \"review_stage\": \"stage1\",\n  \"review_status\": \"pending\",\n  \"warnings\": [\"Both AI critic rounds failed — this estimate could not be validated and needs manual research\"],\n  \"confidence_score\": {{ $('Merge final confidence').first().json.confidenceScore || 0 }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -6000,
+        752
+      ],
+      "id": "fc32aa69-8745-4fed-9d72-251482a28615",
+      "name": "Send to Bidsquire as pending review"
+    },
+    {
+      "parameters": {
+        "jsCode": "const soldData = $('Search eBay sold listings').first().json;\nconst items = (soldData.itemSummaries || []).slice(0, 5);\n\nconst imageJobs = [];\nitems.forEach((item, listingIndex) => {\n  const images = item.image ? [item.image.imageUrl] : [];\n  if (item.additionalImages) {\n    images.push(...item.additionalImages.slice(0, 2).map(img => img.imageUrl));\n  }\n  images.slice(0, 3).forEach((imgUrl, imgIndex) => {\n    imageJobs.push({\n      json: {\n        listingIndex,\n        imgIndex,\n        listingTitle: item.title,\n        listingUrl: item.itemWebUrl,\n        listingPrice: parseFloat(item.price?.value || 0),\n        sourceImageUrl: imgUrl,\n        jobId: $execution.id\n      }\n    });\n  });\n});\n\n// No comps or no images — emit a flag item so the workflow can route around the image chain\nif (imageJobs.length === 0) {\n  return [{ json: { _noImageJobs: true } }];\n}\n\nreturn imageJobs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -14368,
+        560
+      ],
+      "id": "96d45fd8-cefd-4424-b62d-0e33f29a24f1",
+      "name": "Download eBay comparison images"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.sourceImageUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -13936,
+        560
+      ],
+      "id": "74dd66d6-6c5b-4dd4-afa0-02c2a2bbe34c",
+      "name": "Fetch comparison image"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const prev = $input.item.json;\nconst jobId = prev.jobId;\nconst r2Key = `temp/ebay-compare/${jobId}/${prev.listingIndex}-${prev.imgIndex}.jpg`;\nconst r2Url = `https://pub-549c9cb448174f91bfe8c26a11d52e20.r2.dev/${r2Key}`;\n\nreturn {\n  json: {\n    ...prev,\n    r2Key,\n    r2Url\n  },\n  binary: $input.item.binary\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -13712,
+        560
+      ],
+      "id": "14a5c958-da2b-4d01-842d-b4ac7f13a9ce",
+      "name": "Build temp R2 key"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "bidsquire",
+        "fileName": "={{ $json.r2Key }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        -13488,
+        560
+      ],
+      "id": "08c21f4c-f085-4425-9bc9-6b58811b207e",
+      "name": "Upload comparison image to R2",
+      "credentials": {
+        "s3": {
+          "id": "PRKOWqLwaGB7Tx25",
+          "name": "cloudflare r2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\n\n// Group by listingIndex\nconst grouped = {};\nallItems.forEach(item => {\n  const idx = item.json.listingIndex;\n  if (!grouped[idx]) {\n    grouped[idx] = {\n      listingIndex: idx,\n      listingTitle: item.json.listingTitle,\n      listingUrl: item.json.listingUrl,\n      listingPrice: item.json.listingPrice,\n      jobId: item.json.jobId,\n      r2Urls: []\n    };\n  }\n  grouped[idx].r2Urls.push(item.json.r2Url);\n});\n\n// Convert to array of items, one per listing\nreturn Object.values(grouped).map(listing => ({\n  json: {\n    ...listing,\n    r2UrlsJoined: listing.r2Urls.join(',')\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -13040,
+        560
+      ],
+      "id": "97cc8eb7-fbd4-46c2-a19a-1746bb93b348",
+      "name": "Group images by listing"
+    },
+    {
+      "parameters": {
+        "jsCode": "const uploadResults = $input.all();\nconst originalData = $('Build temp R2 key').all();\n\nreturn uploadResults.map((result, index) => {\n  const original = originalData[index].json;\n  return {\n    json: {\n      ...original,\n      uploadSuccess: result.json.success\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -13264,
+        560
+      ],
+      "id": "366bf028-c295-40d1-8a26-7fd750823ada",
+      "name": "Reattach listing metadata"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "claude-opus-4-5-20251101",
+          "mode": "list",
+          "cachedResultName": "claude-opus-4-5-20251101"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Compare the first set of images to the second set of images. Do they show the same physical object — same item, same specific unit, not just the same category of product?\n\nReturn ONLY a valid JSON object, no markdown:\n{\n  \"imageMatchScore\": 0.0 to 1.0,\n  \"sameObject\": true or false,\n  \"visualNotes\": \"brief factual observation, no item identification\"\n}"
+            }
+          ]
+        },
+        "addAttachments": true,
+        "attachmentsUrls": "={{ $('Prepare for analysis').first().json.r2ImageUrlsJoined + ',' + $json.r2UrlsJoined }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        -12816,
+        560
+      ],
+      "id": "81481cb8-a21c-495b-984f-73775e26ca1b",
+      "name": "Blind image match — Claude Opus",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "FzD4RVhzqgsoK520",
+          "name": "Hatim Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const blindMatchResult = $input.item.json;\n\nlet blindMatch = {};\ntry {\n  const raw = blindMatchResult?.content?.[0]?.text || '{}';\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  blindMatch = JSON.parse(cleaned);\n} catch(e) {\n  blindMatch = { imageMatchScore: 0, sameObject: false, visualNotes: 'Failed to parse blind match response' };\n}\n\nreturn {\n  json: {\n    imageMatchScore: blindMatch.imageMatchScore,\n    sameObject: blindMatch.sameObject,\n    visualNotes: blindMatch.visualNotes\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -12464,
+        560
+      ],
+      "id": "e421ee84-cc28-4e8f-b59a-f3868fde1fba",
+      "name": "Parse blind image match"
+    },
+    {
+      "parameters": {
+        "jsCode": "const scores = $input.all();\nconst listings = $('Group images by listing').all();\n\nreturn scores.map((score, index) => ({\n  json: {\n    ...listings[index].json,\n    imageMatchScore: score.json.imageMatchScore,\n    sameObject: score.json.sameObject,\n    visualNotes: score.json.visualNotes\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -12240,
+        560
+      ],
+      "id": "fc0cff0f-f5a1-4d7b-844c-0ef5f3b386b6",
+      "name": "Reattach metadata to scores"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "324244cb-18b0-4576-af96-6ed9280cc973",
+              "leftValue": "={{ $json.imageMatchScore }}",
+              "rightValue": 0.6,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -12016,
+        560
+      ],
+      "id": "9f5d6aae-782b-4c0f-8558-e550b3b2b4fb",
+      "name": "Image match passes threshold?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputs = $input.all();\nconst cameFromNoComps = inputs.length === 1 && inputs[0].json._noImageJobs === true;\n\nreturn [{\n  json: {\n    imageMatchAvailable: false,\n    mergedConfidence: 0.2,\n    confidenceSource: 'text_only_no_image_match',\n    confidenceNotes: cameFromNoComps\n      ? 'No eBay comparables with images were found — estimate relies on text/category matching only, treat with low confidence.'\n      : `All ${inputs.length} eBay comparables failed image verification — different items found. Estimate relies on text/category matching only, treat with low confidence.`,\n    survivingListings: []\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11792,
+        656
+      ],
+      "id": "dcb30083-1a54-49b1-9b8e-c8bccc278cb1",
+      "name": "Handle zero matches"
+    },
+    {
+      "parameters": {
+        "jsCode": "const survivors = $input.all();\n\nconst avgImageScore = survivors.reduce((sum, s) => sum + s.json.imageMatchScore, 0) / survivors.length;\n\nreturn [{\n  json: {\n    imageMatchAvailable: true,\n    mergedConfidence: avgImageScore, // will be combined with text score next\n    survivingListings: survivors.map(s => s.json),\n    survivingCount: survivors.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11792,
+        464
+      ],
+      "id": "5f93415e-42b0-4147-a1b1-fd4a9a77f0c3",
+      "name": "Aggregate surviving listings"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -11568,
+        560
+      ],
+      "id": "7ffbf508-1f38-49ea-bd8d-4456396441d1",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "claude-sonnet-4-6",
+          "mode": "list",
+          "cachedResultName": "claude-sonnet-4-6"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Compare this HiBid auction item against the eBay search results to evaluate text/description match quality.\n\nHIBID ITEM:\nTitle: {{ $('Store item_db IDs').first().json.title }}\nDescription: {{ $('Store item_db IDs').first().json.description }}\nCategory: {{ $('Store item_db IDs').first().json.category }}\n\nEBAY SEARCH RESULTS FOUND:\n{{ $('Parse Serper results').first().json.googleResultsText }}\n\nEvaluate how well the titles, descriptions, and specifications align — independent of any image comparison.\n\nReturn ONLY a valid JSON object, no markdown:\n{\n  \"textMatchScore\": 0.0 to 1.0,\n  \"textMatchNotes\": \"brief explanation\"\n}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        -11344,
+        560
+      ],
+      "id": "7cdecb21-8606-43d8-99d5-f1382f42d41e",
+      "name": "Text match — Claude",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "anthropicApi": {
+          "id": "FzD4RVhzqgsoK520",
+          "name": "Hatim Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const textRaw = $input.first().json;\nconst imageData = $('Merge1').first().json;\nconst original = $('Store item_db IDs').first().json;\n\nlet textMatch = { textMatchScore: 0.3, textMatchNotes: 'parse error' };\ntry {\n  const raw = textRaw?.content?.[0]?.text || '{}';\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  textMatch = JSON.parse(cleaned);\n} catch(e) {\n  console.error('Text match parse error:', e.message);\n}\n\nlet finalConfidence;\nlet confidenceLabel;\n\nif (imageData.imageMatchAvailable) {\n  const imageScore = imageData.mergedConfidence;\n  const textScore = textMatch.textMatchScore;\n\n  if (imageScore >= 0.85 && textScore >= 0.85) {\n    finalConfidence = 0.99;\n    confidenceLabel = 'bingo — image and text both confirm exact match';\n  } else {\n    finalConfidence = (imageScore * 0.6) + (textScore * 0.4);\n    confidenceLabel = `merged — image ${(imageScore*100).toFixed(0)}%, text ${(textScore*100).toFixed(0)}%`;\n  }\n} else {\n  finalConfidence = Math.min(textMatch.textMatchScore * 0.5, 0.4);\n  confidenceLabel = 'text only — no image comparables survived rejection gate';\n}\n\nreturn [{\n  json: {\n    ...original,\n    confidenceScore: finalConfidence, // overrides the original text-only confidence\n    confidenceLabel,\n    imageMatchAvailable: imageData.imageMatchAvailable,\n    survivingListingsCount: imageData.survivingCount || 0,\n    textMatchScore: textMatch.textMatchScore,\n    textMatchNotes: textMatch.textMatchNotes,\n    imageConfidenceNotes: imageData.confidenceNotes || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10992,
+        560
+      ],
+      "id": "368923bb-66e9-4988-a3aa-caae048c531e",
+      "name": "Merge final confidence"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9f170ce6-b547-4a2c-9b7d-6cadb9457c8d",
+              "leftValue": "={{ $json._noImageJobs || false }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -14160,
+        656
+      ],
+      "id": "35c30e53-b8e6-4e8c-a71e-2f68768388f5",
+      "name": "Has comparison images?"
+    },
+    {
+      "parameters": {
+        "url": "https://app.bidsquire.com/api/internal/filter-settings",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "adminId",
+              "value": "={{ $json.adminId }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -20064,
+        560
+      ],
+      "id": "ee02e818-9143-4c58-8b7d-291c074ff54b",
+      "name": "Get filter settings"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('Merge scrape + webhook data').first().json;\nconst settings = $input.first().json || {};\n\nconst text = ((item.title || '') + ' ' + (item.description || '')).toLowerCase();\n\nconst buckets = {\n  furniture: {\n    excluded: settings.exclude_furniture === true,\n    label: 'furniture',\n    keywords: ['dresser', 'armoire', 'hutch', 'couch', 'sofa', 'loveseat', 'recliner',\n      'bed frame', 'headboard', 'nightstand', 'wardrobe', 'credenza', 'sideboard',\n      'dining table', 'dining set', 'coffee table', 'end table', 'bookcase', 'bookshelf',\n      'china cabinet', 'curio cabinet', 'pool table', 'piano', 'desk', 'ottoman', 'futon',\n      'sectional', 'entertainment center', 'chest of drawers', 'vanity']\n  },\n  appliances: {\n    excluded: settings.exclude_appliances === true,\n    label: 'appliances',\n    keywords: ['refrigerator', 'fridge', 'freezer', 'washer', 'dryer', 'washing machine',\n      'dishwasher', 'stove', 'oven', 'range', 'microwave', 'air conditioner', 'water heater',\n      'furnace', 'deep freeze', 'chest freezer']\n  },\n  coins: {\n    excluded: settings.exclude_coins === true,\n    label: 'coins & collectibles',\n    keywords: ['coin', 'morgan dollar', 'peace dollar', 'silver dollar', 'silver eagle',\n      'gold eagle', 'nickel', 'dime', 'quarter', 'half dollar', 'penny', 'cent',\n      'mint state', 'pcgs', 'ngc', 'proof set', 'mint set', 'bullion', 'numismatic']\n  },\n  firearms: {\n    excluded: settings.exclude_firearms === true,\n    label: 'firearms',\n    keywords: ['rifle', 'pistol', 'shotgun', 'handgun', 'revolver', 'firearm', 'ammunition',\n      'ammo', 'gun ', ' gun', 'carbine', 'muzzleloader']\n  },\n  vehicles: {\n    excluded: settings.exclude_vehicles === true,\n    label: 'vehicles',\n    keywords: ['sedan', 'pickup truck', 'suv', 'motorcycle', 'atv', 'utv', 'boat', 'trailer',\n      'camper', 'rv ', 'golf cart', 'tractor', 'mileage', 'vin ', 'odometer', 'title in hand']\n  },\n  realEstate: {\n    excluded: true, // always, no toggle\n    label: 'real estate',\n    keywords: ['real estate', 'acres', 'acreage', 'parcel', 'land lot', 'property located',\n      'sq ft home', 'bedroom home', 'commercial building', 'vacant land', 'deed']\n  }\n};\n\nlet excluded = false;\nlet exclusionReason = '';\n\nfor (const key of Object.keys(buckets)) {\n  const b = buckets[key];\n  if (!b.excluded) continue;\n  const hit = b.keywords.find(kw => text.includes(kw));\n  if (hit) {\n    excluded = true;\n    exclusionReason = b.label + ' (matched: \"' + hit.trim() + '\")';\n    break;\n  }\n}\n\nreturn [{\n  json: {\n    ...item,\n    excluded,\n    exclusionReason\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -19856,
+        560
+      ],
+      "id": "df4a36b3-7c4f-4e33-971d-1e05afe88639",
+      "name": "Apply exclusion filter"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e150f693-0174-41d2-841f-8102c925da1a",
+              "leftValue": "={{ $json.excluded }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -19648,
+        544
+      ],
+      "id": "08595e9b-6f65-43d5-9167-ee5b01abcef4",
+      "name": "Item Excluded?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": " https://app.bidsquire.com/api/internal/mark-excluded",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-internal-secret",
+              "value": "={{ $vars.INTERNAL_API_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"itemId\": \"{{ $json.itemId }}\",\n  \"adminId\": \"{{ $json.adminId }}\",\n  \"reason\": {{ JSON.stringify($json.exclusionReason) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -19440,
+        432
+      ],
+      "id": "ba15d0ac-571d-4eac-9b44-16dd355a070e",
+      "name": "Mark excluded in Bidsquire"
+    }
+  ],
+  "pinData": {
+    "Search eBay listings": [
+      {
+        "json": {
+          "href": "https://api.ebay.com/buy/browse/v1/item_summary/search?q=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&limit=20&filter=buyingOptions%3A%7BAUCTION%7CFIXED_PRICE%7D&sort=price&offset=0",
+          "total": 155,
+          "next": "https://api.ebay.com/buy/browse/v1/item_summary/search?q=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&limit=20&filter=buyingOptions%3A%7BAUCTION%7CFIXED_PRICE%7D&sort=price&offset=20",
+          "limit": 20,
+          "offset": 0,
+          "itemSummaries": [
+            {
+              "itemId": "v1|188559173439|0",
+              "title": "1886 US Morgan Silver Dollar $1 Nice AU",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/o98AAeSwN8dp6s7I/s-l225.jpg"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C188559173439%7C0",
+              "seller": {
+                "username": "belleaircoins",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 60477
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/o98AAeSwN8dp6s7I/s-l640.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.29",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-07-06T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-08T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "AUCTION"
+              ],
+              "bidCount": 2,
+              "currentBidPrice": {
+                "value": "30.99",
+                "currency": "USD"
+              },
+              "itemWebUrl": "https://www.ebay.com/itm/188559173439?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item2be700a73f:g:o98AAeSwN8dp6s7I",
+              "itemLocation": {
+                "postalCode": "337**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/PhwAAeSwf8Fp6s7Q/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "188559173439",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-06-25T13:02:09.000Z",
+              "itemCreationDate": "2026-06-25T13:02:09.000Z",
+              "itemEndDate": "2026-07-02T13:02:09.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|287403763235|0",
+              "title": "1886 (P) Morgan Silver Dollar | Circulated Nice Details | Sealed Slab",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/5S8AAeSwaN9qJiqK/s-l225.jpg"
+              },
+              "price": {
+                "value": "62.00",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C287403763235%7C0",
+              "seller": {
+                "username": "dgctech01",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 353
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/5S8AAeSwaN9qJiqK/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.00",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-29T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-01T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "BEST_OFFER"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/287403763235?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item42ea996623:g:5S8AAeSwaN9qJiqK",
+              "itemLocation": {
+                "postalCode": "953**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/KEQAAeSwhmlqJiqK/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "287403763235",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-06-18T17:32:53.000Z",
+              "itemCreationDate": "2026-06-18T17:32:53.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|127044099446|0",
+              "title": "1886 $1 SILVER Morgan Silver Dollar -- HIGH GRADE & Nice Tone!! (#765)",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/HxcAAOSwLaln9xAh/s-l225.jpg"
+              },
+              "price": {
+                "value": "63.00",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C127044099446%7C0",
+              "seller": {
+                "username": "drobaska2",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 224
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/HxcAAOSwLaln9xAh/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.45",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-06T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/127044099446?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item1d946b1d76:g:HxcAAOSwLaln9xAh",
+              "itemLocation": {
+                "postalCode": "641**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/J9YAAOSwV7xn9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/EWAAAOSwfAxn9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/d7EAAOSwA7hn9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/wOwAAOSwnvtn9xAg/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/BUUAAOSwK8Jn9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/kXAAAOSwVAZn9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/hTYAAOSwRwxn9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/z0sAAOSwX2Jn9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/TZ0AAOSwjXNn9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/X9UAAOSwZ6Bn9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/-MQAAOSwQC5n9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/X3UAAOSwnf5n9xAh/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/cS4AAOSwKWRn9xAj/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "127044099446",
+              "availableCoupons": false,
+              "itemOriginDate": "2025-04-10T00:29:48.000Z",
+              "itemCreationDate": "2025-04-10T00:29:48.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|406632083513|0",
+              "title": "1886 Very Nice Morgan Silver Dollar ",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/iLcAAeSwDI1pdChg/s-l225.jpg"
+              },
+              "price": {
+                "value": "65.00",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C406632083513%7C0",
+              "seller": {
+                "username": "tras1067",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 108
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/iLcAAeSwDI1pdChg/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "6.75",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-06T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "BEST_OFFER"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/406632083513?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item5ead293039:g:iLcAAeSwDI1pdChg",
+              "itemLocation": {
+                "postalCode": "382**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/QgoAAeSwlRNpdChh/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "406632083513",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-01-24T02:04:42.000Z",
+              "itemCreationDate": "2026-01-24T02:04:42.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|236808045322|0",
+              "title": "1886 P Morgan Silver Dollar Nice About Uncirculated Coin",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/-D4AAeSwKuRp~6AG/s-l225.jpg"
+              },
+              "price": {
+                "value": "69.95",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C236808045322%7C0",
+              "seller": {
+                "username": "collectiblesjz2016",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 360
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/-D4AAeSwKuRp~6AG/s-l640.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.00",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-29T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-02T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/236808045322?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item3722dc030a:g:-D4AAeSwKuRp~6AG",
+              "itemLocation": {
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/OU0AAeSwGjRp~6AS/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "236808045322",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-05-09T21:25:52.000Z",
+              "itemCreationDate": "2026-05-09T21:25:52.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|127938851438|0",
+              "title": "1886-P Morgan Silver Dollar Great 90% Silver Coin Very Nice!! SHIPS FREE!!",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/zHMAAeSw0-1qOzyT/s-l225.jpg"
+              },
+              "price": {
+                "value": "74.99",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C127938851438%7C0",
+              "seller": {
+                "username": "lghj1969",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 6921
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/zHMAAeSw0-1qOzyT/s-l640.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "0.00",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-07T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "BEST_OFFER"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/127938851438?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item1dc9bff26e:g:zHMAAeSw0-1qOzyT",
+              "itemLocation": {
+                "postalCode": "015**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/4ZkAAeSw2bRqOzyT/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "127938851438",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-06-24T02:11:52.000Z",
+              "itemCreationDate": "2026-06-24T02:11:52.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|198446927780|0",
+              "title": "Bolo Tie - Genuine 1886 Morgan Dollar  (90% Silver) - clip is Bennett C31  Nice!",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/3VIAAeSwXlVpc~v2/s-l225.jpg"
+              },
+              "price": {
+                "value": "89.99",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C198446927780%7C0",
+              "seller": {
+                "username": "bestmuzzleloadingsupplies",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 20005
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/3VIAAeSwXlVpc~v2/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "6.75",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-06T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "AUCTION"
+              ],
+              "bidCount": 0,
+              "currentBidPrice": {
+                "value": "69.00",
+                "currency": "USD"
+              },
+              "itemWebUrl": "https://www.ebay.com/itm/198446927780?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item2e345bcfa4:g:3VIAAeSwXlVpc~v2",
+              "itemLocation": {
+                "postalCode": "339**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/3~cAAeSw8Vdpc~wW/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/2PkAAeSwg0Zpc~w8/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/0gYAAeSwVeRpc~xK/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "198446927780",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-01-23T23:13:53.000Z",
+              "itemCreationDate": "2026-06-22T22:41:59.000Z",
+              "itemEndDate": "2026-06-27T22:41:59.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|206368757188|0",
+              "title": "1886-O Morgan Silver Dollar Great 90% Silver Coin Very Nice!! SHIPS FREE!!",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/nMUAAeSwzqVqOz4Y/s-l225.jpg"
+              },
+              "price": {
+                "value": "75.99",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C206368757188%7C0",
+              "seller": {
+                "username": "lghj1969",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 6921
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/nMUAAeSwzqVqOz4Y/s-l640.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "0.00",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-07T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "BEST_OFFER"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/206368757188?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item300c8955c4:g:nMUAAeSwzqVqOz4Y",
+              "itemLocation": {
+                "postalCode": "015**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/V5gAAeSw0Q9qOz4Y/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/0QgAAeSwHk1qOz4Y/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "206368757188",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-06-24T02:18:46.000Z",
+              "itemCreationDate": "2026-06-24T02:18:46.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|287245762708|0",
+              "title": "1886 MORGAN DOLLAR ~ NICE PCGS AU DETAILS!",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/318AAeSwaRppzWFk/s-l225.jpg"
+              },
+              "price": {
+                "value": "77.00",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C287245762708%7C0",
+              "seller": {
+                "username": "palmislandcoinsandcurrency",
+                "feedbackPercentage": "99.9",
+                "feedbackScore": 26679
+              },
+              "condition": "Graded",
+              "conditionId": "2750",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/318AAeSwaRppzWFk/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "0.00",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-29T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-02T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/287245762708?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item42e12e8094:g:318AAeSwaRppzWFk",
+              "itemLocation": {
+                "postalCode": "337**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/2j8AAeSwOxhpzWFy/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "287245762708",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-04-01T18:18:38.000Z",
+              "itemCreationDate": "2026-04-01T18:18:38.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|306904878086|0",
+              "title": "~1886-P Morgan Silver Dollar~ Nice Higher Grade Some Luster Strong Strike AU?",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/Bf8AAeSwxBZpe-a~/s-l225.jpg"
+              },
+              "price": {
+                "value": "74.95",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C306904878086%7C0",
+              "seller": {
+                "username": "mredinc",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 5054
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/Bf8AAeSwxBZpe-a~/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "4.95",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-06T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/306904878086?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item4774f4cc06:g:Bf8AAeSwxBZpe-a~",
+              "itemLocation": {
+                "postalCode": "597**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/CMkAAeSwfxlpe-ab/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "306904878086",
+              "availableCoupons": false,
+              "itemOriginDate": "2025-12-19T04:00:01.000Z",
+              "itemCreationDate": "2026-05-11T03:00:01.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|127599794575|0",
+              "title": "1886 P Morgan Silver Dollar $1.00 Nice",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/7NwAAeSwm9NpV~jv/s-l225.jpg"
+              },
+              "price": {
+                "value": "74.99",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C127599794575%7C0",
+              "seller": {
+                "username": "fisher-75",
+                "feedbackPercentage": "99.5",
+                "feedbackScore": 10929
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/7NwAAeSwm9NpV~jv/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "4.98",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-06T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/127599794575?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item1db58a598f:g:7NwAAeSwm9NpV~jv",
+              "itemLocation": {
+                "postalCode": "547**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/A4gAAeSw67lpV~j8/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "127599794575",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-01-02T16:58:15.000Z",
+              "itemCreationDate": "2026-01-02T16:58:15.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|117192152767|0",
+              "title": "Silver 1886  Morgan Dollar     Nice  Choice AU condition",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/GOIAAeSwrmRqA6IX/s-l225.jpg"
+              },
+              "price": {
+                "value": "76.95",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C117192152767%7C0",
+              "seller": {
+                "username": "rockytop1949",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 9019
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/GOIAAeSwrmRqA6IX/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.95",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-03T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/117192152767?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item1b493256bf:g:GOIAAeSwrmRqA6IX",
+              "itemLocation": {
+                "postalCode": "377**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/AoYAAeSwSQRqA6Iq/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "117192152767",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-05-12T21:59:41.000Z",
+              "itemCreationDate": "2026-05-12T21:59:41.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|287235235849|0",
+              "title": "1886 O Morgan Silver $1 #4 **VERY NICE COIN**",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/AX0AAeSwHpVpxZSn/s-l225.jpg"
+              },
+              "price": {
+                "value": "84.99",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C287235235849%7C0",
+              "seller": {
+                "username": "mintmarkcoins1",
+                "feedbackPercentage": "99.9",
+                "feedbackScore": 36808
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/AX0AAeSwHpVpxZSn/s-l960.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "0.00",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-07-01T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-06T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/287235235849?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item42e08de009:g:AX0AAeSwHpVpxZSn",
+              "itemLocation": {
+                "postalCode": "480**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/EgEAAeSwWENpxZSv/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "287235235849",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-03-26T20:19:43.000Z",
+              "itemCreationDate": "2026-03-26T20:19:43.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|336648132591|0",
+              "title": "Nice Low Ball 1886 O Morgan Silver Dollar, Worn FR02? super nice lowball!!",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/EhUAAeSwqQxpTtpv/s-l225.jpg"
+              },
+              "price": {
+                "value": "97.50",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C336648132591%7C0",
+              "seller": {
+                "username": "oldtimecollector-206",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 340
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/EhUAAeSwqQxpTtpv/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "10.00",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-29T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-02T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "AUCTION"
+              ],
+              "bidCount": 0,
+              "currentBidPrice": {
+                "value": "75.00",
+                "currency": "USD"
+              },
+              "itemWebUrl": "https://www.ebay.com/itm/336648132591?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item4e61cad7ef:g:EhUAAeSwqQxpTtpv",
+              "itemLocation": {
+                "postalCode": "981**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/EKUAAeSw7oBpTtpw/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/S6oAAeSwwTBpTtpI/s-l225.jpg"
+                },
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/UuoAAeSwBZ9pTtoq/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "336648132591",
+              "availableCoupons": false,
+              "itemOriginDate": "2025-12-26T18:58:02.000Z",
+              "itemCreationDate": "2026-06-20T04:30:14.000Z",
+              "itemEndDate": "2026-06-27T04:30:14.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|227331189239|0",
+              "title": "1886 O Morgan Dollar - Key Date- Circulated- Nice Details",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/bO0AAeSwemNpdSpg/s-l225.jpg"
+              },
+              "price": {
+                "value": "79.90",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C227331189239%7C0",
+              "seller": {
+                "username": "hugoswholesalecoins",
+                "feedbackPercentage": "99.6",
+                "feedbackScore": 5721
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/bO0AAeSwemNpdSpg/s-l960.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.95",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-06T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "BEST_OFFER"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/227331189239?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item34edfea9f7:g:bO0AAeSwemNpdSpg",
+              "itemLocation": {
+                "postalCode": "191**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/mRMAAeSwEpVpdSpo/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "227331189239",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-01-24T20:24:53.000Z",
+              "itemCreationDate": "2026-05-05T17:24:52.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|236756549411|0",
+              "title": "1886-P Morgan Silver Dollar Absolutely Super Nice Detail 7 Tail Feathers 621",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/El8AAeSwNBlp3pLy/s-l225.jpg"
+              },
+              "price": {
+                "value": "85.86",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C236756549411%7C0",
+              "seller": {
+                "username": "lowbird7",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 2095
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/El8AAeSwNBlp3pLy/s-l960.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "0.00",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-06T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/236756549411?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item371fca3f23:g:El8AAeSwNBlp3pLy",
+              "itemLocation": {
+                "postalCode": "945**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/LgMAAeSw9fpp3pLK/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "236756549411",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-04-14T19:20:43.000Z",
+              "itemCreationDate": "2026-04-14T19:20:43.000Z",
+              "topRatedBuyingExperience": true,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|287070826750|0",
+              "title": "1886  MORGAN SILVER DOLLAR *** NICE CIRCULATED COIN - L@@K AT PICTURES!  #6116",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/4sIAAOSwOWhh1ySV/s-l225.jpg"
+              },
+              "price": {
+                "value": "79.90",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C287070826750%7C0",
+              "seller": {
+                "username": "coinsandtreasures",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 24171
+              },
+              "marketingPrice": {
+                "originalPrice": {
+                  "value": "99.88",
+                  "currency": "USD"
+                },
+                "discountPercentage": "20",
+                "discountAmount": {
+                  "value": "19.98",
+                  "currency": "USD"
+                },
+                "priceTreatment": "MARKDOWN"
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/4sIAAOSwOWhh1ySV/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.97",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-29T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-02T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "BEST_OFFER"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/287070826750?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item42d6c130fe:g:4sIAAOSwOWhh1ySV",
+              "itemLocation": {
+                "postalCode": "270**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/vgsAAOSwx0Bh1ySZ/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "287070826750",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-01-12T23:26:13.000Z",
+              "itemCreationDate": "2026-01-12T23:26:13.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|287070837836|0",
+              "title": "1886  MORGAN SILVER DOLLAR *** NICE CIRCULATED COIN - L@@K AT PICTURES!  #6113",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/ajcAAOSwCk1h1yPA/s-l225.jpg"
+              },
+              "price": {
+                "value": "79.90",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C287070837836%7C0",
+              "seller": {
+                "username": "coinsandtreasures",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 24171
+              },
+              "marketingPrice": {
+                "originalPrice": {
+                  "value": "99.88",
+                  "currency": "USD"
+                },
+                "discountPercentage": "20",
+                "discountAmount": {
+                  "value": "19.98",
+                  "currency": "USD"
+                },
+                "priceTreatment": "MARKDOWN"
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/ajcAAOSwCk1h1yPA/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.97",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-29T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-02T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "BEST_OFFER"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/287070837836?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item42d6c15c4c:g:ajcAAOSwCk1h1yPA",
+              "itemLocation": {
+                "postalCode": "270**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/sHwAAOSwu1Nh1yPD/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "287070837836",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-01-12T23:30:40.000Z",
+              "itemCreationDate": "2026-01-12T23:30:40.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|287070820945|0",
+              "title": "1886  MORGAN SILVER DOLLAR *** NICE CIRCULATED COIN - L@@K AT PICTURES!  #6112",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/60IAAOSwnwth1yNQ/s-l225.jpg"
+              },
+              "price": {
+                "value": "79.99",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C287070820945%7C0",
+              "seller": {
+                "username": "coinsandtreasures",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 24171
+              },
+              "marketingPrice": {
+                "originalPrice": {
+                  "value": "99.99",
+                  "currency": "USD"
+                },
+                "discountPercentage": "20",
+                "discountAmount": {
+                  "value": "20.00",
+                  "currency": "USD"
+                },
+                "priceTreatment": "MARKDOWN"
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/60IAAOSwnwth1yNQ/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.97",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-07T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "BEST_OFFER"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/287070820945?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item42d6c11a51:g:60IAAOSwnwth1yNQ",
+              "itemLocation": {
+                "postalCode": "270**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/P9cAAOSwS-hh1yNW/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "287070820945",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-01-12T23:24:46.000Z",
+              "itemCreationDate": "2026-01-12T23:24:46.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            },
+            {
+              "itemId": "v1|287070821100|0",
+              "title": "1886  MORGAN SILVER DOLLAR *** NICE CIRCULATED COIN - L@@K AT PICTURES!  #6117",
+              "leafCategoryIds": [
+                "39464"
+              ],
+              "categories": [
+                {
+                  "categoryId": "39464",
+                  "categoryName": "Morgan (1878-1921)"
+                },
+                {
+                  "categoryId": "253",
+                  "categoryName": "Coins: US"
+                },
+                {
+                  "categoryId": "11116",
+                  "categoryName": "Coins & Paper Money"
+                },
+                {
+                  "categoryId": "11975",
+                  "categoryName": "Dollars"
+                }
+              ],
+              "image": {
+                "imageUrl": "https://i.ebayimg.com/images/g/ZQ8AAOSwlFVh1yTE/s-l225.jpg"
+              },
+              "price": {
+                "value": "79.99",
+                "currency": "USD"
+              },
+              "itemHref": "https://api.ebay.com/buy/browse/v1/item/v1%7C287070821100%7C0",
+              "seller": {
+                "username": "coinsandtreasures",
+                "feedbackPercentage": "100.0",
+                "feedbackScore": 24171
+              },
+              "marketingPrice": {
+                "originalPrice": {
+                  "value": "99.99",
+                  "currency": "USD"
+                },
+                "discountPercentage": "20",
+                "discountAmount": {
+                  "value": "20.00",
+                  "currency": "USD"
+                },
+                "priceTreatment": "MARKDOWN"
+              },
+              "condition": "Ungraded",
+              "conditionId": "4000",
+              "thumbnailImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/ZQ8AAOSwlFVh1yTE/s-l1600.jpg"
+                }
+              ],
+              "shippingOptions": [
+                {
+                  "shippingCostType": "FIXED",
+                  "shippingCost": {
+                    "value": "5.97",
+                    "currency": "USD"
+                  },
+                  "minEstimatedDeliveryDate": "2026-06-30T07:00:00.000Z",
+                  "maxEstimatedDeliveryDate": "2026-07-07T07:00:00.000Z"
+                }
+              ],
+              "buyingOptions": [
+                "FIXED_PRICE",
+                "BEST_OFFER"
+              ],
+              "itemWebUrl": "https://www.ebay.com/itm/287070821100?_skw=1886+Morgan+Silver+Dollar+NICELY+CIRCULATED&hash=item42d6c11aec:g:ZQ8AAOSwlFVh1yTE",
+              "itemLocation": {
+                "postalCode": "270**",
+                "country": "US"
+              },
+              "additionalImages": [
+                {
+                  "imageUrl": "https://i.ebayimg.com/images/g/tGEAAOSw2G5h1yTI/s-l225.jpg"
+                }
+              ],
+              "adultOnly": false,
+              "legacyItemId": "287070821100",
+              "availableCoupons": false,
+              "itemOriginDate": "2026-01-12T23:24:47.000Z",
+              "itemCreationDate": "2026-01-12T23:24:47.000Z",
+              "topRatedBuyingExperience": false,
+              "priorityListing": false,
+              "listingMarketplaceId": "EBAY_US"
+            }
+          ]
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "sorcer.app.n8n.cloud",
+            "user-agent": "node",
+            "content-length": "229",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "*",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "108.181.167.171",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "US",
+            "cf-ray": "a15cae325bc0f0a2-DFW",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "sec-fetch-mode": "cors",
+            "x-forwarded-for": "108.181.167.171, 172.70.94.149",
+            "x-forwarded-host": "sorcer.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-28-854bc9cc5d-s4fvk",
+            "x-is-trusted": "yes",
+            "x-real-ip": "108.181.167.171"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "url_main": "https://hibid.com/lot/310398759/1893-isabella-quarter-uncirculated?ref=catalog",
+            "itemId": "3b6879d6-cc9b-4a03-b34a-1e525a49b4d0",
+            "adminId": "982d4689-446a-4100-aec7-0da859f9c497",
+            "adminEmail": "hatimtoor2025@gmail.com"
+          },
+          "webhookUrl": "https://sorcer.app.n8n.cloud/webhook/789023dc-a9bf-459c-8789-d9d0c993d1cb",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Scrape HiBid listing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape HiBid listing": {
+      "main": [
+        [
+          {
+            "node": "Merge scrape + webhook data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge scrape + webhook data": {
+      "main": [
+        [
+          {
+            "node": "Get filter settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Category search": {
+      "main": [
+        [
+          {
+            "node": "Build exact match query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build exact match query": {
+      "main": [
+        [
+          {
+            "node": "Serper search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exact match — Claude": {
+      "main": [
+        [
+          {
+            "node": "Parse match result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse match result": {
+      "main": [
+        [
+          {
+            "node": "Upsert item_db row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert item_db row": {
+      "main": [
+        [
+          {
+            "node": "Create match record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create match record": {
+      "main": [
+        [
+          {
+            "node": "Store item_db IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store item_db IDs": {
+      "main": [
+        [
+          {
+            "node": "Clean image URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean image URL": {
+      "main": [
+        [
+          {
+            "node": "Download image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download image": {
+      "main": [
+        [
+          {
+            "node": "Upload to R2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to R2": {
+      "main": [
+        [
+          {
+            "node": "Save image to item_db",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save image to item_db": {
+      "main": [
+        [
+          {
+            "node": "Get R2 image URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build eBay auth": {
+      "main": [
+        [
+          {
+            "node": "Get eBay token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get eBay token": {
+      "main": [
+        [
+          {
+            "node": "Search eBay sold listings",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Search eBay active listings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search eBay listings": {
+      "main": [
+        []
+      ]
+    },
+    "Compute price range": {
+      "main": [
+        [
+          {
+            "node": "Save price history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save price history": {
+      "main": [
+        [
+          {
+            "node": "Analyze images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze images": {
+      "main": [
+        [
+          {
+            "node": "Merge image analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge image analysis": {
+      "main": [
+        [
+          {
+            "node": "AI appraiser attempt 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI appraiser attempt 1": {
+      "main": [
+        [
+          {
+            "node": "Parse appraiser 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse appraiser 1": {
+      "main": [
+        [
+          {
+            "node": "Save appraiser 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save appraiser 1": {
+      "main": [
+        [
+          {
+            "node": "Critic round 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic round 1": {
+      "main": [
+        [
+          {
+            "node": "Parse critic 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse critic 1": {
+      "main": [
+        [
+          {
+            "node": "Save critic 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save critic 1": {
+      "main": [
+        [
+          {
+            "node": "Critic 1 passed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic 1 passed?": {
+      "main": [
+        [
+          {
+            "node": "Use appraisal 1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI appraiser attempt 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use appraisal 1": {
+      "main": [
+        [
+          {
+            "node": "Build final result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI appraiser attempt 2": {
+      "main": [
+        [
+          {
+            "node": "Parse appraiser 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse appraiser 2": {
+      "main": [
+        [
+          {
+            "node": "Save appraiser 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save appraiser 2": {
+      "main": [
+        [
+          {
+            "node": "Critic round 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic round 2": {
+      "main": [
+        [
+          {
+            "node": "Parse critic 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse critic 2": {
+      "main": [
+        [
+          {
+            "node": "Save critic 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save critic 2": {
+      "main": [
+        [
+          {
+            "node": "Critic 2 passed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic 2 passed?": {
+      "main": [
+        [
+          {
+            "node": "Use appraisal 2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag human review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use appraisal 2": {
+      "main": [
+        [
+          {
+            "node": "Build final result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize match": {
+      "main": [
+        [
+          {
+            "node": "Send result to Bidsquire",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Serper search": {
+      "main": [
+        [
+          {
+            "node": "Parse Serper results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Serper results": {
+      "main": [
+        [
+          {
+            "node": "Exact match — Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get R2 image URLs": {
+      "main": [
+        [
+          {
+            "node": "Prepare for analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare for analysis": {
+      "main": [
+        [
+          {
+            "node": "Build eBay auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build final result": {
+      "main": [
+        [
+          {
+            "node": "Finalize match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search eBay sold listings": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search eBay active listings": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Download eBay comparison images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check forgery risk": {
+      "main": [
+        [
+          {
+            "node": "Merge forgery data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge forgery data": {
+      "main": [
+        [
+          {
+            "node": "Category search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag human review": {
+      "main": [
+        [
+          {
+            "node": "Send to Bidsquire as pending review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download eBay comparison images": {
+      "main": [
+        [
+          {
+            "node": "Has comparison images?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch comparison image": {
+      "main": [
+        [
+          {
+            "node": "Build temp R2 key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build temp R2 key": {
+      "main": [
+        [
+          {
+            "node": "Upload comparison image to R2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload comparison image to R2": {
+      "main": [
+        [
+          {
+            "node": "Reattach listing metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group images by listing": {
+      "main": [
+        [
+          {
+            "node": "Blind image match — Claude Opus",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reattach listing metadata": {
+      "main": [
+        [
+          {
+            "node": "Group images by listing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blind image match — Claude Opus": {
+      "main": [
+        [
+          {
+            "node": "Parse blind image match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse blind image match": {
+      "main": [
+        [
+          {
+            "node": "Reattach metadata to scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reattach metadata to scores": {
+      "main": [
+        [
+          {
+            "node": "Image match passes threshold?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image match passes threshold?": {
+      "main": [
+        [
+          {
+            "node": "Aggregate surviving listings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle zero matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate surviving listings": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle zero matches": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Text match — Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text match — Claude": {
+      "main": [
+        [
+          {
+            "node": "Merge final confidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge final confidence": {
+      "main": [
+        [
+          {
+            "node": "Compute price range",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has comparison images?": {
+      "main": [
+        [
+          {
+            "node": "Fetch comparison image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle zero matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get filter settings": {
+      "main": [
+        [
+          {
+            "node": "Apply exclusion filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply exclusion filter": {
+      "main": [
+        [
+          {
+            "node": "Item Excluded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Item Excluded?": {
+      "main": [
+        [
+          {
+            "node": "Mark excluded in Bidsquire",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check forgery risk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "SAjyu31o6WGPb1VH",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "7c830ad9-3dea-44f0-8852-5121603482ca",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "07dcb4eff5cec83f8adf60b88df62464865d575cce2cc1131fb9c986bf1a088a"
+  },
+  "nodeGroups": [],
+  "id": "YXbFcdV4AVRSb2ry",
+  "tags": []
+}
