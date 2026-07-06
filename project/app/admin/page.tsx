@@ -51,6 +51,10 @@ export default function AdminPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('workflow');
   const [error, setError] = useState('');
+  // Confirmation banners for whole-auction dispatches (catalog URLs)
+  const [dispatches, setDispatches] = useState<
+    { auctionName: string; totalLots: number; estimatedMinutes: number }[]
+  >([]);
 
   // Image Gallery Modal State
   const [selectedItem, setSelectedItem] = useState<AuctionItem | null>(null);
@@ -357,17 +361,80 @@ export default function AdminPage() {
     setUrls(['']);
   };
 
+  // Dispatch a whole auction (catalog URL). Server pre-flights lot count + credits
+  // then hands off to the n8n dispatcher; individual lots stream into the pipeline.
+  const dispatchAuction = async (auctionUrl: string): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/webhook/send-auction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auction_url: auctionUrl, adminId: user?.id, adminEmail: user?.email }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data.success) {
+        setDispatches(prev => [
+          ...prev,
+          {
+            auctionName: data.auction_name,
+            totalLots: data.total_lots,
+            estimatedMinutes: data.estimated_minutes,
+          },
+        ]);
+        toast.success(
+          `Dispatching ${data.auction_name} — ${data.total_lots} lots, roughly ${data.estimated_minutes} min. Items will appear in the pipeline as they complete; the summary email arrives when the auction finishes.`,
+          { duration: 10000 }
+        );
+        refetchCredits();
+        return true;
+      }
+
+      if (response.status === 403 && data.code === 'INSUFFICIENT_CREDITS_FOR_AUCTION') {
+        toast.error(data.message || 'Insufficient credits for this auction.');
+      } else if (response.status === 422) {
+        toast.error(data.error || 'Could not read this auction page.');
+      } else {
+        toast.error(data.message || data.error || 'Failed to dispatch auction.');
+      }
+      return false;
+    } catch (err) {
+      console.error('Error dispatching auction:', err);
+      toast.error('Network error dispatching auction.');
+      return false;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Filter and Validate URLs
+    // Route each pasted line: catalog (whole-auction) URLs go to the dispatcher,
+    // everything else follows the existing per-lot flow below.
+    const allTrimmed = urls.map(u => u.trim()).filter(Boolean);
+    const catalogUrls = allTrimmed.filter(u => u.includes('/catalog/'));
+    const lotUrls = allTrimmed.filter(u => !u.includes('/catalog/'));
+
+    if (catalogUrls.length > 0) {
+      setIsSubmitting(true);
+      try {
+        for (const auctionUrl of catalogUrls) {
+          await dispatchAuction(auctionUrl);
+        }
+      } finally {
+        setIsSubmitting(false);
+      }
+    }
+
+    // Nothing left for the per-lot path — clear the inputs if we dispatched.
+    if (lotUrls.length === 0) {
+      if (catalogUrls.length > 0) setUrls(['']);
+      return;
+    }
+
+    // Filter and Validate URLs (per-lot)
     const validUrls: string[] = [];
     const invalidUrls: string[] = [];
 
-    urls.forEach(u => {
-      const trimmed = u.trim();
-      if (!trimmed) return;
-
+    lotUrls.forEach(trimmed => {
       const validation = validateUrl(trimmed);
       if (validation.isValid) {
         validUrls.push(trimmed);
@@ -979,6 +1046,21 @@ export default function AdminPage() {
                   </Button>
                 </div>
               </form>
+
+              {dispatches.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  {dispatches.map((d, i) => (
+                    <div
+                      key={i}
+                      className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900"
+                    >
+                      <span className="font-semibold">Dispatching {d.auctionName}</span> — {d.totalLots} lots,
+                      roughly {d.estimatedMinutes} min. Items will appear in the pipeline as they complete;
+                      the summary email arrives when the auction finishes.
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
           </CardContent>
