@@ -9,10 +9,20 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const FROM_EMAIL = 'bid@bidsquire.com';
 const NOTIFY_EMAILS = ['paul@schmoozzer.com', 'hatimtoor2025@gmail.com'];
 
-async function sendEmail(subject: string, html: string): Promise<void> {
+/**
+ * Shared Resend transport. Reused by the internal lead alerts (fixed recipients)
+ * and by the auction summary email (sent to the admin). Returns whether the send
+ * succeeded so callers can react (e.g. roll back an idempotency log row).
+ */
+export async function sendResendEmail(params: {
+  to: string | string[];
+  subject: string;
+  html: string;
+  fromName?: string;
+}): Promise<boolean> {
   if (!RESEND_API_KEY) {
     console.warn('[Notify] RESEND_API_KEY not set — skipping email');
-    return;
+    return false;
   }
 
   try {
@@ -23,22 +33,28 @@ async function sendEmail(subject: string, html: string): Promise<void> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: `Bidsquire Alerts <${FROM_EMAIL}>`,
-        to: NOTIFY_EMAILS,
-        subject,
-        html,
+        from: `${params.fromName || 'Bidsquire'} <${FROM_EMAIL}>`,
+        to: params.to,
+        subject: params.subject,
+        html: params.html,
       }),
     });
 
     if (!response.ok) {
       const err = await response.text();
       console.error('[Notify] Resend error:', err);
-    } else {
-      console.log('[Notify] Email sent:', subject);
+      return false;
     }
+    console.log('[Notify] Email sent:', params.subject);
+    return true;
   } catch (e) {
     console.error('[Notify] Failed to send email:', e);
+    return false;
   }
+}
+
+async function sendEmail(subject: string, html: string): Promise<void> {
+  await sendResendEmail({ to: NOTIFY_EMAILS, subject, html, fromName: 'Bidsquire Alerts' });
 }
 
 function row(label: string, value: string) {
