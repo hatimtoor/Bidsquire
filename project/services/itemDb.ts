@@ -466,16 +466,20 @@ class ItemDbService {
     return result.rows;
   }
 
+  // `category` is retained for signature compatibility but no longer used in the
+  // query. A keyword hit is now REQUIRED: matching on category alone previously
+  // misattributed keyword-specific notes to unrelated items (e.g. any Jewelry
+  // item got the Tiffany row, any Coins item got the Morgan-slab row). The
+  // keyword comparison uses a word-boundary regex (\m..\M) so "coin" matches the
+  // word "coin" but not substrings like "coincidence".
   async checkForgeryRisk(title: string, category: string) {
     const titleLower = title.toLowerCase();
-    const categoryLower = category.toLowerCase();
 
     const result = await this.query(
       `SELECT * FROM forgery_risk
-       WHERE (item_category ILIKE $1 OR item_category IS NULL)
-       OR EXISTS (
+       WHERE EXISTS (
          SELECT 1 FROM unnest(item_keywords) AS kw
-         WHERE $2 ILIKE '%' || kw || '%'
+         WHERE $1 ~* ('\\m' || kw || '\\M')
        )
        ORDER BY
          CASE forgery_risk_level
@@ -483,9 +487,11 @@ class ItemDbService {
            WHEN 'medium' THEN 2
            WHEN 'low' THEN 3
            ELSE 4
-         END
+         END,
+         cardinality(item_keywords) ASC,
+         id
        LIMIT 1`,
-      [categoryLower, titleLower]
+      [titleLower]
     );
 
     if (result.rows.length === 0) {
