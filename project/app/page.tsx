@@ -20,6 +20,7 @@ export default function HomePage() {
       case 'photographer': return { href: '/photographer' };
       case 'researcher2': return { href: '/researcher2' };
       case 'metro_manager': return { href: '/metro' };
+      case 'operator': return { href: '/operator' };
       default: return { href: '/' };
     }
   };

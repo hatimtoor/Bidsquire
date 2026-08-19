@@ -6,9 +6,7 @@
 //
 // Auth mirrors send-url.ts exactly (trusts adminId from the body; no JWT).
 import type { NextApiRequest, NextApiResponse } from 'next';
-
-const SCRAPER_URL = 'https://hibid-seven.vercel.app/api/scrape-auction';
-const DISPATCHER_URL = 'https://sorcer.app.n8n.cloud/webhook/auction-dispatch';
+import { scrapeAuction, fireAuctionDispatcher } from '@/services/auctionDispatch';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -26,26 +24,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // (a) Scrape the catalog for the auction name + full lot count.
-    let scrape: any = null;
-    try {
-      const scrapeRes = await fetch(`${SCRAPER_URL}?url=${encodeURIComponent(auction_url)}`);
-      if (scrapeRes.ok) {
-        scrape = await scrapeRes.json();
-      } else {
-        console.error(`[send-auction] scraper returned ${scrapeRes.status}`);
-      }
-    } catch (e) {
-      console.error('[send-auction] scraper request failed:', e);
-    }
-
-    const auctionName: string = scrape?.auction_name;
-    const totalLots: number =
-      Number(scrape?.total_lots) ||
-      (Array.isArray(scrape?.lots) ? scrape.lots.length : 0);
-
-    if (!scrape || !Array.isArray(scrape.lots) || totalLots <= 0 || !auctionName) {
+    const scraped = await scrapeAuction(auction_url);
+    if (!scraped) {
       return res.status(422).json({ error: 'Could not read this auction page.' });
     }
+    const { auctionName, totalLots } = scraped;
 
     const { databaseService } = await import('@/services/database');
 
@@ -81,23 +64,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       console.error('[send-auction] duplicate check failed:', e);
     }
 
-    // (d) Fire-and-forget the dispatcher (bounded to 10s; it acks fast with
-    // dispatch_started and keeps working in the background).
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10_000);
-      await fetch(DISPATCHER_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auction_url, adminId, adminEmail }),
-        signal: controller.signal,
-      })
-        .then((r) => console.log(`[send-auction] dispatcher acked: ${r.status}`))
-        .catch((err) => console.error('[send-auction] dispatcher error:', err?.message || err))
-        .finally(() => clearTimeout(timeout));
-    } catch (e) {
-      console.error('[send-auction] dispatch failed:', e);
-    }
+    // (d) Fire-and-forget the dispatcher (it acks fast and keeps working in the
+    // background, feeding each lot through the normal per-lot pipeline).
+    await fireAuctionDispatcher({ auctionUrl: auction_url, adminId, adminEmail });
 
     return res.status(200).json({
       success: true,

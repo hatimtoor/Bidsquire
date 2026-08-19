@@ -1,9 +1,11 @@
-// Add an auction to the territory (manager only). Creates a metro_auctions row;
-// wiring this to actually dispatch the catalog's lots (send-auction) is a follow-up.
+// Add an auction to the territory (manager only). Creates a metro_auctions row and,
+// when a catalog URL is given, scrapes it for the real name + lot count and fires
+// the n8n Auction Dispatcher so lots flow through the normal per-lot pipeline.
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { databaseService } from '@/services/database';
 import { verifyToken } from '@/services/auth';
 import { METRO_MANAGER_ROLES } from '@/lib/metro';
+import { scrapeAuction, fireAuctionDispatcher } from '@/services/auctionDispatch';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -23,18 +25,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!orgId) return res.status(400).json({ error: 'No metro (organization) on this account' });
 
   const { name, county, sourceUrl, lots, closesAt } = req.body || {};
-  const auctionName = (name || '').trim() || 'New auction from HiBid';
 
   try {
+    // If a catalog URL is given, scrape it for the real name + lot count.
+    let auctionName = (name || '').trim();
+    let lotCount: number | null = typeof lots === 'number' ? lots : null;
+    let dispatchable = false;
+
+    if (sourceUrl) {
+      const scraped = await scrapeAuction(sourceUrl);
+      if (scraped) {
+        auctionName = auctionName || scraped.auctionName;
+        lotCount = scraped.totalLots;
+        dispatchable = true;
+      }
+    }
+    if (!auctionName) auctionName = 'New auction from HiBid';
+
     const row = await databaseService.createMetroAuction({
       orgId,
       name: auctionName,
       county: county || undefined,
       sourceUrl: sourceUrl || undefined,
-      lots: typeof lots === 'number' ? lots : null,
+      lots: lotCount,
       closesAt: closesAt || null,
     });
-    return res.status(200).json({ success: true, auction: row });
+
+    // Fire the dispatcher so lots start flowing through the normal pipeline.
+    // Credits attach to the manager (who acts as the metro's admin); the per-lot
+    // send-url gate still applies downstream.
+    let dispatched = false;
+    if (dispatchable && sourceUrl) {
+      await fireAuctionDispatcher({ auctionUrl: sourceUrl, adminId: decoded.id, adminEmail: decoded.email });
+      dispatched = true;
+    }
+
+    return res.status(200).json({ success: true, auction: row, dispatched });
   } catch (error) {
     console.error('[metro/auctions]', error);
     return res.status(500).json({
