@@ -7,7 +7,7 @@ interface User {
   id: string;
   name: string;
   email: string;
-  role: 'super_admin' | 'admin' | 'researcher' | 'photographer' | 'researcher2';
+  role: 'super_admin' | 'admin' | 'researcher' | 'photographer' | 'researcher2' | 'metro_manager' | 'operator';
   isTrial?: boolean;
   orgId?: string;
 }

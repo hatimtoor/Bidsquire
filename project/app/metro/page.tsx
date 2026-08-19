@@ -1,11 +1,11 @@
 'use client';
 
-// Metro Manager dashboard — UX-only build (no backend yet). Mock data + the two
-// core flows: assign an unassigned auction to an operator, and add a team member.
-// Role-gated to admin / super_admin for now; a dedicated `metro_manager` role
-// would replace that gate once the backend lands. See vault: Metro Manager (Build Scope).
+// Metro Manager dashboard — live against /api/metro/*. The manager sees the whole
+// territory, provisions operators, finds auctions, and assigns each to one person
+// (assignment is the visibility boundary: operators only see their own auctions).
+// Role-gated to metro_manager / admin / super_admin.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
@@ -52,21 +52,18 @@ import {
   MapPin,
 } from 'lucide-react';
 import { toast } from 'sonner';
-
-// ── Mock data ───────────────────────────────────────────────────────────────
+import { NYC_METRO_COUNTIES } from '@/lib/metro';
 
 interface Operator {
-  id: number;
+  id: string;
   name: string;
   county: string;
   auctions: number;
   items: number;
 }
-
 type AuctionStatus = 'new' | 'uploading' | 'listed' | 'sold';
-
 interface Auction {
-  id: number;
+  id: string;
   name: string;
   site: string;
   county: string;
@@ -75,53 +72,14 @@ interface Auction {
   status: AuctionStatus;
   closes: string;
 }
-
-interface County {
-  name: string;
-  state: 'NY' | 'CT' | 'NJ';
-  active: number; // active operators/auctions in this county
+interface Coverage { name: string; state: string; active: number; }
+interface Stats {
+  counties_held: number;
+  active_operators: number;
+  auctions_in_progress: number;
+  items_this_week: number;
+  listed_on_ebay: number;
 }
-
-const INITIAL_TEAM: Operator[] = [
-  { id: 1, name: 'Marcus Reed', county: 'Westchester, NY', auctions: 3, items: 41 },
-  { id: 2, name: 'Dana Cole', county: 'Bergen & Hudson, NJ', auctions: 2, items: 28 },
-  { id: 3, name: 'Priya Nair', county: 'Nassau, NY', auctions: 1, items: 12 },
-  { id: 4, name: 'Luis Ortega', county: 'Suffolk, NY', auctions: 2, items: 33 },
-];
-
-const INITIAL_AUCTIONS: Auction[] = [
-  { id: 1, name: 'Yonkers Estate — Mid-Century Modern', site: 'HiBid · Empire Auctions', county: 'Westchester', operator: 'Marcus Reed', lots: 87, status: 'listed', closes: 'Aug 22' },
-  { id: 2, name: 'Paramus Storage Units 40–52', site: 'HiBid · North NJ Storage', county: 'Bergen', operator: 'Dana Cole', lots: 64, status: 'uploading', closes: 'Aug 20' },
-  { id: 3, name: 'Hempstead Estate Liquidation', site: 'HiBid · LI Estate Co.', county: 'Nassau', operator: 'Priya Nair', lots: 112, status: 'new', closes: 'Aug 25' },
-  { id: 4, name: 'Riverhead Farm Auction', site: 'HiBid · East End Auctions', county: 'Suffolk', operator: 'Luis Ortega', lots: 53, status: 'listed', closes: 'Aug 21' },
-  { id: 5, name: 'Stamford Downsizing Sale', site: 'HiBid · Gold Coast Sales', county: 'Fairfield', operator: null, lots: 78, status: 'new', closes: 'Aug 24' },
-  { id: 6, name: 'Morristown Antiques Lot', site: 'HiBid · Morris Auction House', county: 'Morris', operator: null, lots: 45, status: 'new', closes: 'Aug 26' },
-];
-
-// The full 21-county roster for Yanni's NYC Metro (Paul, Aug 2026).
-const COUNTIES: County[] = [
-  { name: 'Manhattan', state: 'NY', active: 0 },
-  { name: 'Brooklyn', state: 'NY', active: 0 },
-  { name: 'Queens', state: 'NY', active: 0 },
-  { name: 'Bronx', state: 'NY', active: 0 },
-  { name: 'Staten Island', state: 'NY', active: 0 },
-  { name: 'Westchester', state: 'NY', active: 3 },
-  { name: 'Rockland', state: 'NY', active: 0 },
-  { name: 'Putnam', state: 'NY', active: 0 },
-  { name: 'Suffolk', state: 'NY', active: 2 },
-  { name: 'Nassau', state: 'NY', active: 1 },
-  { name: 'Fairfield', state: 'CT', active: 1 },
-  { name: 'New Haven', state: 'CT', active: 0 },
-  { name: 'Bergen', state: 'NJ', active: 2 },
-  { name: 'Hudson', state: 'NJ', active: 1 },
-  { name: 'Passaic', state: 'NJ', active: 0 },
-  { name: 'Essex', state: 'NJ', active: 0 },
-  { name: 'Union', state: 'NJ', active: 0 },
-  { name: 'Morris', state: 'NJ', active: 0 },
-  { name: 'Middlesex', state: 'NJ', active: 0 },
-  { name: 'Somerset', state: 'NJ', active: 0 },
-  { name: 'Monmouth', state: 'NJ', active: 0 },
-];
 
 const STATUS: Record<AuctionStatus, { label: string; className: string }> = {
   new: { label: 'New', className: 'bg-blue-100 text-blue-700 border-blue-200' },
@@ -130,90 +88,163 @@ const STATUS: Record<AuctionStatus, { label: string; className: string }> = {
   sold: { label: 'Sold', className: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
 };
 
+const COUNTY_OPTIONS = NYC_METRO_COUNTIES.map((c) => ({ label: `${c.name}, ${c.state}`, value: c.name }));
+
 function initials(name: string): string {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
-
-// ── Page ──────────────────────────────────────────────────────────────────
 
 export default function MetroManagerPage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
 
-  const [team, setTeam] = useState<Operator[]>(INITIAL_TEAM);
-  const [auctions, setAuctions] = useState<Auction[]>(INITIAL_AUCTIONS);
+  const isManager =
+    user?.role === 'metro_manager' || user?.role === 'admin' || user?.role === 'super_admin';
+
+  const [metroName, setMetroName] = useState('New York Metro');
+  const [team, setTeam] = useState<Operator[]>([]);
+  const [auctions, setAuctions] = useState<Auction[]>([]);
+  const [coverage, setCoverage] = useState<Coverage[]>(
+    NYC_METRO_COUNTIES.map((c) => ({ name: c.name, state: c.state, active: 0 }))
+  );
+  const [stats, setStats] = useState<Stats>({
+    counties_held: NYC_METRO_COUNTIES.length,
+    active_operators: 0,
+    auctions_in_progress: 0,
+    items_this_week: 0,
+    listed_on_ebay: 0,
+  });
+  const [isLoadingData, setIsLoadingData] = useState(true);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [assignId, setAssignId] = useState<number | null>(null);
+  const [assignId, setAssignId] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  // Add-member form
   const [memberName, setMemberName] = useState('');
   const [memberEmail, setMemberEmail] = useState('');
-  const [memberCounty, setMemberCounty] = useState('Westchester, NY');
+  const [memberCounty, setMemberCounty] = useState(COUNTY_OPTIONS[0].value);
   const [pwMethod, setPwMethod] = useState<'link' | 'manual'>('link');
+  const [manualPassword, setManualPassword] = useState('');
 
   useEffect(() => {
     if (!isLoading && !user) {
       router.push('/auth/login');
-    } else if (user && user.role !== 'admin' && user.role !== 'super_admin') {
+    } else if (user && !isManager) {
       router.push('/admin');
     }
-  }, [user, isLoading, router]);
+  }, [user, isLoading, isManager, router]);
 
-  const countiesActive = useMemo(() => COUNTIES.filter((c) => c.active > 0).length, []);
+  const loadSummary = useCallback(async () => {
+    try {
+      const res = await fetch('/api/metro/summary', { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setMetroName(data.metroName || 'New York Metro');
+      setTeam(Array.isArray(data.team) ? data.team : []);
+      setAuctions(Array.isArray(data.auctions) ? data.auctions : []);
+      if (Array.isArray(data.counties)) setCoverage(data.counties);
+      if (data.stats) setStats(data.stats);
+    } catch (err) {
+      console.error('Error loading metro summary:', err);
+      toast.error('Could not load the metro dashboard.');
+    } finally {
+      setIsLoadingData(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user && isManager) loadSummary();
+  }, [user, isManager, loadSummary]);
+
   const assigning = auctions.find((a) => a.id === assignId) || null;
   const unassignedCount = auctions.filter((a) => !a.operator).length;
+  const countiesActive = coverage.filter((c) => c.active > 0).length;
 
-  const assignTo = (operator: Operator) => {
-    if (assignId === null) return;
-    setAuctions((prev) =>
-      prev.map((a) => (a.id === assignId ? { ...a, operator: operator.name, status: 'uploading' } : a))
-    );
-    setAssignId(null);
-    toast.success(`Assigned to ${operator.name}`);
+  const assignTo = async (operator: Operator) => {
+    if (!assignId) return;
+    setBusy(true);
+    try {
+      const res = await fetch('/api/metro/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ auctionId: assignId, operatorId: operator.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      toast.success(`Assigned to ${operator.name}`);
+      setAssignId(null);
+      await loadSummary();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to assign auction.');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const addMember = () => {
+  const addMember = async () => {
     if (!memberName.trim() || !memberEmail.trim()) {
       toast.error('Name and email are required.');
       return;
     }
-    setTeam((prev) => [
-      ...prev,
-      { id: Date.now(), name: memberName.trim(), county: memberCounty, auctions: 0, items: 0 },
-    ]);
-    toast.success(
-      pwMethod === 'link'
-        ? `Set-up link emailed to ${memberEmail.trim()}`
-        : `${memberName.trim()} added — send them their password`
-    );
-    setAddOpen(false);
-    setMemberName('');
-    setMemberEmail('');
-    setMemberCounty('Westchester, NY');
-    setPwMethod('link');
+    setBusy(true);
+    try {
+      const res = await fetch('/api/metro/team', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: memberName.trim(),
+          email: memberEmail.trim(),
+          homeCounty: memberCounty,
+          pwMethod,
+          password: pwMethod === 'manual' ? manualPassword : undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      toast.success(
+        pwMethod === 'link'
+          ? `Set-up link emailed to ${memberEmail.trim()}`
+          : `${memberName.trim()} added.`
+      );
+      setAddOpen(false);
+      setMemberName('');
+      setMemberEmail('');
+      setMemberCounty(COUNTY_OPTIONS[0].value);
+      setPwMethod('link');
+      setManualPassword('');
+      await loadSummary();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to add member.');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const addFoundAuction = (county: string) => {
-    setAuctions((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        name: 'New auction from HiBid',
-        site: 'HiBid · pending scrape',
-        county,
-        operator: null,
-        lots: '—',
-        status: 'new',
-        closes: '—',
-      },
-    ]);
-    setFindOpen(false);
-    toast.success('Added to territory — assign it to an operator.');
+  const addFoundAuction = async (county: string, url: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch('/api/metro/auctions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ county, sourceUrl: url }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      toast.success('Added to territory — assign it to an operator.');
+      setFindOpen(false);
+      await loadSummary();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to add auction.');
+    } finally {
+      setBusy(false);
+    }
   };
 
-  if (isLoading || !user || (user.role !== 'admin' && user.role !== 'super_admin')) {
+  if (isLoading || !user || !isManager) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -230,6 +261,14 @@ export default function MetroManagerPage() {
     { label: 'Settings', icon: Settings, active: false },
   ];
 
+  const statCards = [
+    { n: stats.counties_held, l: 'Counties held' },
+    { n: stats.active_operators, l: 'Active operators' },
+    { n: stats.auctions_in_progress, l: 'Auctions in progress' },
+    { n: stats.items_this_week, l: 'Items this week' },
+    { n: stats.listed_on_ebay, l: 'Listed on eBay' },
+  ];
+
   return (
     <div className="flex min-h-screen bg-gray-50">
       {/* Sidebar */}
@@ -237,7 +276,7 @@ export default function MetroManagerPage() {
         <div className="px-5 py-5 text-lg font-bold tracking-tight">Bidsquire</div>
         <div className="mx-3 mb-4 rounded-lg border bg-gray-50 px-3 py-2.5">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Metro</div>
-          <div className="text-base font-semibold text-gray-900">New York</div>
+          <div className="text-base font-semibold text-gray-900">{metroName}</div>
         </div>
         <nav className="flex-1 space-y-1 px-3">
           {nav.map((n) => (
@@ -254,10 +293,10 @@ export default function MetroManagerPage() {
         </nav>
         <div className="m-3 flex items-center gap-3 border-t pt-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-900 text-sm font-semibold text-white">
-            Y
+            {initials(user.name || 'M')}
           </div>
           <div className="leading-tight">
-            <div className="text-sm font-medium text-gray-900">Yanni</div>
+            <div className="text-sm font-medium text-gray-900">{user.name}</div>
             <div className="text-xs text-gray-400">Metro manager</div>
           </div>
         </div>
@@ -265,11 +304,10 @@ export default function MetroManagerPage() {
 
       {/* Main */}
       <div className="min-w-0 flex-1">
-        {/* Header */}
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b bg-white px-6 py-4">
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-gray-900">New York Metro</h1>
-            <p className="text-sm text-gray-500">Territory overview · {COUNTIES.length} counties held</p>
+            <h1 className="text-2xl font-bold text-gray-900">{metroName}</h1>
+            <p className="text-sm text-gray-500">Territory overview · {stats.counties_held} counties held</p>
           </div>
           <div className="relative hidden sm:block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -286,15 +324,8 @@ export default function MetroManagerPage() {
         </div>
 
         <div className="space-y-7 px-6 py-6">
-          {/* Stats */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-            {[
-              { n: COUNTIES.length, l: 'Counties held' },
-              { n: team.length, l: 'Active operators' },
-              { n: auctions.length, l: 'Auctions in progress' },
-              { n: 147, l: 'Items this week' },
-              { n: 89, l: 'Listed on eBay' },
-            ].map((s) => (
+            {statCards.map((s) => (
               <Card key={s.l}>
                 <CardContent className="p-4">
                   <div className="text-3xl font-bold tabular-nums text-gray-900">{s.n}</div>
@@ -327,43 +358,59 @@ export default function MetroManagerPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {auctions.map((a) => (
-                        <TableRow key={a.id}>
-                          <TableCell>
-                            <div className="font-medium text-gray-900">{a.name}</div>
-                            <div className="text-xs text-gray-400">{a.site}</div>
+                      {isLoadingData ? (
+                        <TableRow>
+                          <TableCell colSpan={6} className="py-10 text-center text-gray-400">
+                            <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                           </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-800">
-                              {a.county}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {a.operator ? (
-                              <div className="flex items-center gap-2">
-                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-800 text-[10px] font-semibold text-white">
-                                  {initials(a.operator)}
-                                </span>
-                                <span className="text-sm text-gray-700">{a.operator}</span>
-                              </div>
-                            ) : (
-                              <Button
-                                variant="link"
-                                className="h-auto p-0 text-blue-600"
-                                onClick={() => setAssignId(a.id)}
-                              >
-                                Assign
-                                <ArrowRight className="ml-1 h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                          </TableCell>
-                          <TableCell className="tabular-nums text-gray-700">{a.lots}</TableCell>
-                          <TableCell>
-                            <Badge className={STATUS[a.status].className}>{STATUS[a.status].label}</Badge>
-                          </TableCell>
-                          <TableCell className="text-gray-500">{a.closes}</TableCell>
                         </TableRow>
-                      ))}
+                      ) : auctions.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={6} className="py-10 text-center text-gray-500">
+                            No auctions yet. Use <b>Find auction</b> to add one to the territory.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        auctions.map((a) => (
+                          <TableRow key={a.id}>
+                            <TableCell>
+                              <div className="font-medium text-gray-900">{a.name}</div>
+                              <div className="text-xs text-gray-400">{a.site}</div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-800">
+                                {a.county}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {a.operator ? (
+                                <div className="flex items-center gap-2">
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-800 text-[10px] font-semibold text-white">
+                                    {initials(a.operator)}
+                                  </span>
+                                  <span className="text-sm text-gray-700">{a.operator}</span>
+                                </div>
+                              ) : (
+                                <Button
+                                  variant="link"
+                                  className="h-auto p-0 text-blue-600"
+                                  onClick={() => setAssignId(a.id)}
+                                >
+                                  Assign
+                                  <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </TableCell>
+                            <TableCell className="tabular-nums text-gray-700">{a.lots}</TableCell>
+                            <TableCell>
+                              <Badge className={STATUS[a.status]?.className || STATUS.new.className}>
+                                {STATUS[a.status]?.label || a.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-gray-500">{a.closes}</TableCell>
+                          </TableRow>
+                        ))
+                      )}
                     </TableBody>
                   </Table>
                 </div>
@@ -373,7 +420,6 @@ export default function MetroManagerPage() {
 
           {/* Two columns */}
           <div className="grid gap-6 lg:grid-cols-2">
-            {/* Team roster */}
             <div>
               <div className="mb-3 flex items-center gap-3">
                 <h2 className="text-lg font-semibold text-gray-900">Team</h2>
@@ -381,41 +427,43 @@ export default function MetroManagerPage() {
               </div>
               <Card>
                 <CardContent className="p-0">
-                  {team.map((t, i) => (
-                    <div
-                      key={t.id}
-                      className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? 'border-t' : ''}`}
-                    >
-                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-900 text-sm font-semibold text-white">
-                        {initials(t.name)}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium text-gray-900">{t.name}</div>
-                        <div className="text-xs text-gray-400">{t.county}</div>
-                      </div>
-                      <div className="text-right text-xs text-gray-500">
-                        <span className="block text-base font-semibold tabular-nums text-gray-800">
-                          {t.auctions}
-                        </span>
-                        auctions · {t.items} items
-                      </div>
+                  {team.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-sm text-gray-500">
+                      No operators yet. Use <b>Add member</b> to invite someone.
                     </div>
-                  ))}
+                  ) : (
+                    team.map((t, i) => (
+                      <div key={t.id} className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? 'border-t' : ''}`}>
+                        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-900 text-sm font-semibold text-white">
+                          {initials(t.name)}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium text-gray-900">{t.name}</div>
+                          <div className="text-xs text-gray-400">{t.county}</div>
+                        </div>
+                        <div className="text-right text-xs text-gray-500">
+                          <span className="block text-base font-semibold tabular-nums text-gray-800">
+                            {t.auctions}
+                          </span>
+                          auctions · {t.items} items
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </CardContent>
               </Card>
             </div>
 
-            {/* County coverage */}
             <div>
               <div className="mb-3 flex items-center gap-3">
                 <h2 className="text-lg font-semibold text-gray-900">County coverage</h2>
                 <Badge variant="outline" className="text-gray-500">
-                  {COUNTIES.length} held · {countiesActive} active
+                  {coverage.length} held · {countiesActive} active
                 </Badge>
               </div>
               <Card>
                 <CardContent className="grid grid-cols-2 gap-2 p-4">
-                  {COUNTIES.map((c) => {
+                  {coverage.map((c) => {
                     const active = c.active > 0;
                     return (
                       <div
@@ -433,9 +481,7 @@ export default function MetroManagerPage() {
                             {active ? `${c.active} active` : 'held · idle'}
                           </div>
                         </div>
-                        <span
-                          className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-green-500' : 'bg-gray-300'}`}
-                        />
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-green-500' : 'bg-gray-300'}`} />
                       </div>
                     );
                   })}
@@ -469,14 +515,10 @@ export default function MetroManagerPage() {
                 Home county <span className="font-normal text-gray-400">(where they&apos;re based)</span>
               </Label>
               <Select value={memberCounty} onValueChange={setMemberCounty}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {COUNTIES.map((c) => (
-                    <SelectItem key={`${c.name}-${c.state}`} value={`${c.name}, ${c.state}`}>
-                      {c.name}, {c.state}
-                    </SelectItem>
+                  {COUNTY_OPTIONS.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -484,44 +526,37 @@ export default function MetroManagerPage() {
             <div className="space-y-2">
               <Label>How do they get their password?</Label>
               <RadioGroup value={pwMethod} onValueChange={(v) => setPwMethod(v as 'link' | 'manual')} className="gap-2">
-                <label
-                  htmlFor="pw-link"
-                  className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${
-                    pwMethod === 'link' ? 'border-blue-300 bg-blue-50/50' : ''
-                  }`}
-                >
+                <label htmlFor="pw-link" className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${pwMethod === 'link' ? 'border-blue-300 bg-blue-50/50' : ''}`}>
                   <RadioGroupItem value="link" id="pw-link" className="mt-0.5" />
                   <div>
-                    <div className="flex items-center gap-1.5 text-sm font-medium">
-                      <Mail className="h-3.5 w-3.5" /> Email them a set-up link
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      They click a link and choose their own password. Nothing to hand over.
-                    </div>
+                    <div className="flex items-center gap-1.5 text-sm font-medium"><Mail className="h-3.5 w-3.5" /> Email them a set-up link</div>
+                    <div className="text-xs text-gray-500">They click a link and choose their own password. Nothing to hand over.</div>
                   </div>
                 </label>
-                <label
-                  htmlFor="pw-manual"
-                  className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${
-                    pwMethod === 'manual' ? 'border-blue-300 bg-blue-50/50' : ''
-                  }`}
-                >
+                <label htmlFor="pw-manual" className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${pwMethod === 'manual' ? 'border-blue-300 bg-blue-50/50' : ''}`}>
                   <RadioGroupItem value="manual" id="pw-manual" className="mt-0.5" />
                   <div>
-                    <div className="flex items-center gap-1.5 text-sm font-medium">
-                      <KeyRound className="h-3.5 w-3.5" /> I&apos;ll set it and send it to them
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      You create the password now and pass it along yourself.
-                    </div>
+                    <div className="flex items-center gap-1.5 text-sm font-medium"><KeyRound className="h-3.5 w-3.5" /> I&apos;ll set it and send it to them</div>
+                    <div className="text-xs text-gray-500">You create the password now and pass it along yourself.</div>
                   </div>
                 </label>
               </RadioGroup>
+              {pwMethod === 'manual' && (
+                <Input
+                  type="text"
+                  value={manualPassword}
+                  onChange={(e) => setManualPassword(e.target.value)}
+                  placeholder="Set a password (min 6 chars)"
+                  className="mt-1"
+                />
+              )}
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
-            <Button onClick={addMember}>Add member</Button>
+            <Button variant="outline" onClick={() => setAddOpen(false)} disabled={busy}>Cancel</Button>
+            <Button onClick={addMember} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add member'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -536,21 +571,26 @@ export default function MetroManagerPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-72 space-y-2 overflow-y-auto">
-            {team.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => assignTo(t)}
-                className="flex w-full items-center gap-3 rounded-md border p-3 text-left hover:border-blue-300 hover:bg-blue-50/50"
-              >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
-                  {initials(t.name)}
-                </span>
-                <div>
-                  <div className="text-sm font-medium text-gray-900">{t.name}</div>
-                  <div className="text-xs text-gray-400">{t.county} · {t.auctions} active</div>
-                </div>
-              </button>
-            ))}
+            {team.length === 0 ? (
+              <p className="py-6 text-center text-sm text-gray-500">Add a team member first.</p>
+            ) : (
+              team.map((t) => (
+                <button
+                  key={t.id}
+                  disabled={busy}
+                  onClick={() => assignTo(t)}
+                  className="flex w-full items-center gap-3 rounded-md border p-3 text-left hover:border-blue-300 hover:bg-blue-50/50 disabled:opacity-60"
+                >
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+                    {initials(t.name)}
+                  </span>
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">{t.name}</div>
+                    <div className="text-xs text-gray-400">{t.county} · {t.auctions} active</div>
+                  </div>
+                </button>
+              ))
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAssignId(null)}>Cancel</Button>
@@ -559,22 +599,23 @@ export default function MetroManagerPage() {
       </Dialog>
 
       {/* Find auction modal */}
-      <FindAuctionDialog open={findOpen} onOpenChange={setFindOpen} onAdd={addFoundAuction} />
+      <FindAuctionDialog open={findOpen} onOpenChange={setFindOpen} busy={busy} onAdd={addFoundAuction} />
     </div>
   );
 }
 
-// Small local component so the county selection has its own state.
 function FindAuctionDialog({
   open,
   onOpenChange,
+  busy,
   onAdd,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  onAdd: (county: string) => void;
+  busy: boolean;
+  onAdd: (county: string, url: string) => void;
 }) {
-  const [county, setCounty] = useState('Fairfield');
+  const [county, setCounty] = useState(COUNTY_OPTIONS[0].value);
   const [url, setUrl] = useState('');
 
   return (
@@ -588,14 +629,10 @@ function FindAuctionDialog({
           <div className="space-y-1.5">
             <Label>County</Label>
             <Select value={county} onValueChange={setCounty}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
+              <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {COUNTIES.map((c) => (
-                  <SelectItem key={`${c.name}-${c.state}`} value={c.name}>
-                    {c.name}, {c.state}
-                  </SelectItem>
+                {COUNTY_OPTIONS.map((c) => (
+                  <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -604,17 +641,14 @@ function FindAuctionDialog({
             <Label htmlFor="find-url" className="flex items-center gap-1.5">
               <MapPin className="h-3.5 w-3.5" /> Paste a HiBid auction URL
             </Label>
-            <Input
-              id="find-url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://hibid.com/catalog/…"
-            />
+            <Input id="find-url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://hibid.com/catalog/…" />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => onAdd(county)}>Add to territory</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
+          <Button onClick={() => onAdd(county, url)} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add to territory'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
