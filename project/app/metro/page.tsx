@@ -115,6 +115,7 @@ export default function MetroManagerPage() {
     listed_on_ebay: 0,
   });
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [activeNav, setActiveNav] = useState('overview');
 
   const [addOpen, setAddOpen] = useState(false);
   const [assignId, setAssignId] = useState<string | null>(null);
@@ -254,12 +255,22 @@ export default function MetroManagerPage() {
   }
 
   const nav = [
-    { label: 'Overview', icon: LayoutDashboard, active: true },
-    { label: 'Auctions', icon: Gavel, active: false },
-    { label: 'Team', icon: Users, active: false },
-    { label: 'Counties', icon: MapIcon, active: false },
-    { label: 'Settings', icon: Settings, active: false },
+    { key: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { key: 'auctions', label: 'Auctions', icon: Gavel },
+    { key: 'team', label: 'Team', icon: Users },
+    { key: 'counties', label: 'Counties', icon: MapIcon },
+    { key: 'settings', label: 'Settings', icon: Settings },
   ];
+
+  // The dashboard is a single page; nav items jump to their section.
+  const goToSection = (key: string) => {
+    if (key === 'settings') {
+      toast.info('Metro settings are coming soon.');
+      return;
+    }
+    setActiveNav(key);
+    document.getElementById(key)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const statCards = [
     { n: stats.counties_held, l: 'Counties held' },
@@ -280,15 +291,19 @@ export default function MetroManagerPage() {
         </div>
         <nav className="flex-1 space-y-1 px-3">
           {nav.map((n) => (
-            <div
-              key={n.label}
-              className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm ${
-                n.active ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-600'
+            <button
+              key={n.key}
+              type="button"
+              onClick={() => goToSection(n.key)}
+              className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                activeNav === n.key
+                  ? 'bg-blue-50 text-blue-700 font-medium'
+                  : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
               <n.icon className="h-4 w-4" />
               {n.label}
-            </div>
+            </button>
           ))}
         </nav>
         <div className="m-3 flex items-center gap-3 border-t pt-4">
@@ -324,7 +339,7 @@ export default function MetroManagerPage() {
         </div>
 
         <div className="space-y-7 px-6 py-6">
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+          <div id="overview" className="grid grid-cols-2 gap-4 md:grid-cols-5 scroll-mt-24">
             {statCards.map((s) => (
               <Card key={s.l}>
                 <CardContent className="p-4">
@@ -336,7 +351,7 @@ export default function MetroManagerPage() {
           </div>
 
           {/* Auctions */}
-          <div>
+          <div id="auctions" className="scroll-mt-24">
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h2 className="text-lg font-semibold text-gray-900">Auctions</h2>
               <Badge variant="outline" className="text-gray-500">
@@ -420,7 +435,7 @@ export default function MetroManagerPage() {
 
           {/* Two columns */}
           <div className="grid gap-6 lg:grid-cols-2">
-            <div>
+            <div id="team" className="scroll-mt-24">
               <div className="mb-3 flex items-center gap-3">
                 <h2 className="text-lg font-semibold text-gray-900">Team</h2>
                 <Badge variant="outline" className="text-gray-500">{team.length} operators</Badge>
@@ -454,7 +469,7 @@ export default function MetroManagerPage() {
               </Card>
             </div>
 
-            <div>
+            <div id="counties" className="scroll-mt-24">
               <div className="mb-3 flex items-center gap-3">
                 <h2 className="text-lg font-semibold text-gray-900">County coverage</h2>
                 <Badge variant="outline" className="text-gray-500">
