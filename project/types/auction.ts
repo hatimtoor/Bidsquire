@@ -51,7 +51,7 @@ export interface UserAccount {
   name: string;
   email: string;
   password: string;
-  role: 'researcher' | 'photographer' | 'researcher2' | 'admin' | 'super_admin';
+  role: 'researcher' | 'photographer' | 'researcher2' | 'admin' | 'super_admin' | 'metro_manager' | 'operator';
   createdAt: Date;
   updatedAt: Date;
   isActive: boolean;
@@ -61,6 +61,7 @@ export interface UserAccount {
   orgId?: string;
   ebayConnected?: boolean;
   ebayUserId?: string;
+  homeCounty?: string; // for operators — the county they're based in
 }
 
 export interface WorkflowStep {

@@ -335,6 +335,26 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_users_created_by ON users(created_by)
       `);
 
+      // Metro Manager: operators have a home county; auctions are tagged + assigned.
+      await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS home_county VARCHAR(120)`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS metro_auctions (
+          id VARCHAR(255) PRIMARY KEY,
+          org_id VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          county VARCHAR(120),
+          source_url TEXT,
+          operator_id VARCHAR(255),
+          status VARCHAR(30) NOT NULL DEFAULT 'new',
+          lots INTEGER,
+          closes_at VARCHAR(60),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_metro_auctions_org ON metro_auctions(org_id)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_metro_auctions_operator ON metro_auctions(operator_id)`);
+
       client.release();
       console.log('✅ Database tables created successfully');
     } catch (error) {
@@ -982,6 +1002,7 @@ class DatabaseService {
       orgId: row.org_id || undefined,
       ebayConnected: !!row.ebay_refresh_token,
       ebayUserId: row.ebay_user_id || undefined,
+      homeCounty: row.home_county || undefined,
     };
   }
 
@@ -1646,6 +1667,105 @@ class DatabaseService {
         [orgId]
       );
       return result.rows.map(row => this.mapUserFromDb(row));
+    } finally {
+      client.release();
+    }
+  }
+
+  // ─── Metro Manager ─────────────────────────────────────────────────────────
+  // A "metro" is an organization. metro_auctions overlays assignment + county
+  // tagging onto an auction; operators (users with role 'operator' in the org)
+  // only ever see auctions assigned to them.
+
+  async createMetroAuction(data: {
+    orgId: string;
+    name: string;
+    county?: string;
+    sourceUrl?: string;
+    lots?: number | null;
+    closesAt?: string | null;
+  }): Promise<any> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const id = crypto.randomUUID();
+      const result = await client.query(
+        `INSERT INTO metro_auctions (id, org_id, name, county, source_url, lots, closes_at, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'new')
+         RETURNING *`,
+        [id, data.orgId, data.name, data.county || null, data.sourceUrl || null, data.lots ?? null, data.closesAt || null]
+      );
+      return result.rows[0];
+    } finally {
+      client.release();
+    }
+  }
+
+  async getMetroAuctions(orgId: string, operatorId?: string): Promise<any[]> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      // Operator scoping: an operator only sees auctions assigned to them.
+      const result = operatorId
+        ? await client.query(
+            `SELECT m.*, u.name AS operator_name
+             FROM metro_auctions m LEFT JOIN users u ON u.id = m.operator_id
+             WHERE m.org_id = $1 AND m.operator_id = $2
+             ORDER BY m.created_at DESC`,
+            [orgId, operatorId]
+          )
+        : await client.query(
+            `SELECT m.*, u.name AS operator_name
+             FROM metro_auctions m LEFT JOIN users u ON u.id = m.operator_id
+             WHERE m.org_id = $1
+             ORDER BY m.created_at DESC`,
+            [orgId]
+          );
+      return result.rows;
+    } finally {
+      client.release();
+    }
+  }
+
+  async assignMetroAuction(id: string, orgId: string, operatorId: string): Promise<any | null> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      // Scope the update to the manager's own org so one metro can't touch another's.
+      const result = await client.query(
+        `UPDATE metro_auctions
+         SET operator_id = $1, status = 'uploading', updated_at = NOW()
+         WHERE id = $2 AND org_id = $3
+         RETURNING *`,
+        [operatorId, id, orgId]
+      );
+      return result.rows[0] || null;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Live territory stats derived from the real item pipeline for this org.
+  async getMetroStats(orgId: string): Promise<{ items_this_week: number; listed_on_ebay: number }> {
+    if (isBrowser) throw new Error('Database service not available on client side');
+    await this.ensureInitialized();
+    const client = await this.getClient();
+    try {
+      const week = await client.query(
+        `SELECT COUNT(*)::int AS c FROM auction_items
+         WHERE org_id = $1 AND status <> 'processing' AND created_at > NOW() - INTERVAL '7 days'`,
+        [orgId]
+      );
+      const listed = await client.query(
+        `SELECT COUNT(*)::int AS c FROM auction_items
+         WHERE org_id = $1
+           AND (final_data->>'ebayListingId' IS NOT NULL OR final_data->>'ebayOfferId' IS NOT NULL)`,
+        [orgId]
+      );
+      return { items_this_week: week.rows[0].c, listed_on_ebay: listed.rows[0].c };
     } finally {
       client.release();
     }
