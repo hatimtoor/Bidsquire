@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { LayoutDashboard, Users, Settings, CreditCard, ClipboardCheck } from 'lucide-react';
+import { LayoutDashboard, Users, Settings, CreditCard, ClipboardCheck, Map as MapIcon } from 'lucide-react';
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> { }
 
@@ -38,6 +38,13 @@ export function Sidebar({ className }: SidebarProps) {
                 show: true
             },
             {
+                label: 'Metro',
+                icon: MapIcon,
+                href: '/metro',
+                active: pathname?.startsWith('/metro'),
+                show: true
+            },
+            {
                 label: 'Credit Management',
                 icon: CreditCard,
                 href: '/super-admin/credits',
@@ -57,6 +64,13 @@ export function Sidebar({ className }: SidebarProps) {
                 icon: Users,
                 href: '/admin/users',
                 active: pathname?.startsWith('/admin/users'),
+                show: true
+            },
+            {
+                label: 'Metro',
+                icon: MapIcon,
+                href: '/metro',
+                active: pathname?.startsWith('/metro'),
                 show: true
             }
         ]),
